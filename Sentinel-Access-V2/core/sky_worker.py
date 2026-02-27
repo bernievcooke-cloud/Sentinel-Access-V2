@@ -324,7 +324,8 @@ def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
         print(f"Location: {location}")
         print(f"Coordinates: {coords}")
         
-        lat, lon = coords
+        latitude = coords['latitude']
+        longitude = coords['longitude']
         df = fetch_sky_data(lat, lon)
         
         if df is None or len(df) == 0:
@@ -437,4 +438,5 @@ def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
         print(f"\n❌ SKY REPORT GENERATION FAILED")
         print(f"Error: {type(e).__name__}: {e}")
         print(f"{'='*50}\n")
+
         raise
