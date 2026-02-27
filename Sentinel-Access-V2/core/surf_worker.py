@@ -258,7 +258,8 @@ def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
         print(f"GENERATING SURF REPORT: {location}")
         print(f"{'='*50}")
         
-        lat, lon = coords
+        latitude = coords['latitude']
+        longitude = coords['longitude']
         df = fetch_surf_data(lat, lon)
         
         if df is None or len(df) == 0:
@@ -360,4 +361,5 @@ def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
             shutil.rmtree(temp_dir)
             print(f"[OK] Temp files cleaned up")
         except:
+
             pass
