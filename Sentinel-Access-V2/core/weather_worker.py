@@ -227,7 +227,7 @@ def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
         
         latitude = coords['latitude']
         longitude = coords['longitude']
-        h_df, d_df = fetch_weather_data(lat, lon)
+        h_df, d_df = fetch_weather_data(latitude, longitude)
         
         if h_df is None or d_df is None:
             raise Exception("Failed to fetch weather data")
