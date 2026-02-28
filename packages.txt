@@ -1,5 +1,4 @@
 libfreetype6-dev
 libpng-dev
 pkg-config
-libopencv-dev
 python3-dev
