@@ -1,0 +1,15 @@
+# System Dependencies for Python Image Processing
+
+# List of packages needed for Python-based image processing projects:
+
+numpy
+opencv-python
+Pillow
+scikit-image
+matplotlib
+imageio
+
+# Additional packages that may be useful:
+
+tensorflow
+scikit-learn
