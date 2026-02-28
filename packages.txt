@@ -1,4 +1,1 @@
-libfreetype6-dev
-libpng-dev
-pkg-config
 python3-dev
