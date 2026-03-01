@@ -50,7 +50,8 @@ except ImportError as e:
 
 REPORT_TYPES = {
     "Surf Report": {"price": "$29.99", "icon": "🌊"},
-    "Night Sky Report": {"price": "$29.99", "icon": "🌌"}
+    "Night Sky Report": {"price": "$29.99", "icon": "🌌"},
+    "Weather Report": {"price": "$29.99", "icon": "🌤️"}
 }
 
 # ============================================================
@@ -74,6 +75,9 @@ if 'selected_location' not in st.session_state:
 
 if 'selected_report_type' not in st.session_state:
     st.session_state.selected_report_type = "Surf Report"
+
+if 'reports_queue' not in st.session_state:
+    st.session_state.reports_queue = []
 
 # ============================================================
 # HELPER FUNCTIONS
@@ -114,6 +118,8 @@ def generate_report(location_name, report_type):
         # Determine report type for worker
         if "Surf" in report_type:
             report_type_key = "Surf"
+        elif "Weather" in report_type:
+            report_type_key = "Weather"
         else:
             report_type_key = "Night"
         
@@ -292,7 +298,7 @@ with col_center:
     # Location
     if location_list:
         st.session_state.selected_location = st.selectbox(
-            "Location",
+            "Select Location",
             location_list,
             key="location_select"
         )
@@ -308,6 +314,13 @@ with col_center:
     
     st.divider()
     
+    # Show queued reports
+    if st.session_state.reports_queue:
+        st.markdown("**📋 Reports in queue:**")
+        for i, r in enumerate(st.session_state.reports_queue, 1):
+            st.markdown(f"{i}. {r['icon']} {r['type']} @ {r['location']}")
+        st.divider()
+    
     # Generate button
     if st.button("💳 GENERATE & PAY", use_container_width=True):
         # Validation
@@ -320,38 +333,65 @@ with col_center:
         elif not st.session_state.selected_location:
             st.error("❌ Location required")
         else:
-            # Process
-            with st.spinner("🔄 Generating report..."):
-                st.info("🔄 Generating PDF report...")
-                time.sleep(1)
+            # Build list of reports to process (queue + current)
+            current_report = {
+                "type": st.session_state.selected_report_type,
+                "location": st.session_state.selected_location,
+                "icon": report_info['icon']
+            }
+            all_reports = st.session_state.reports_queue + [current_report]
+            
+            unit_price = float(report_info['price'].replace('$', ''))
+            total_price = unit_price * len(all_reports)
+            
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            all_pdf_paths = []
+            success = True
+            
+            for idx, rep in enumerate(all_reports):
+                pct_start = int(idx / len(all_reports) * 100)
+                pct_end = int((idx + 1) / len(all_reports) * 100)
                 
-                # Generate PDF
-                pdf_path = generate_report(
-                    st.session_state.selected_location,
-                    st.session_state.selected_report_type
-                )
+                status_text.info(f"⏳ [{idx+1}/{len(all_reports)}] Generating {rep['icon']} {rep['type']} for {rep['location']}...")
+                progress_bar.progress(pct_start)
+                time.sleep(0.5)
+                
+                pdf_path = generate_report(rep['location'], rep['type'])
                 
                 if pdf_path:
-                    st.success("✅ Report generated!")
-                    st.divider()
-                    st.info("💳 Processing payment...")
-                    time.sleep(1)
-                    st.success("✅ Payment successful!")
-                    
-                    # Send email
-                    st.info("📧 Sending email with PDF...")
-                    
-                    email_subject = f"Your {st.session_state.selected_report_type} - Sentinel Access"
-                    email_body = f"""
+                    all_pdf_paths.append(pdf_path)
+                    status_text.success(f"✅ [{idx+1}/{len(all_reports)}] {rep['type']} generated!")
+                    progress_bar.progress(pct_end)
+                else:
+                    status_text.error(f"❌ [{idx+1}/{len(all_reports)}] Failed to generate {rep['type']}")
+                    success = False
+                    break
+            
+            if success and all_pdf_paths:
+                progress_bar.progress(100)
+                status_text.info("💳 Processing payment...")
+                time.sleep(1)
+                st.success("✅ Payment successful!")
+                
+                # Send email with first PDF (primary report)
+                st.info("📧 Sending email with report(s)...")
+                
+                report_lines = "\n".join(
+                    f"- {r['icon']} {r['type']} @ {r['location']}" for r in all_reports
+                )
+                email_subject = "Your Sentinel Access Report(s)"
+                email_body = f"""
 Hello {st.session_state.username},
 
-Your report has been generated and is ready!
+Your report(s) have been generated and are ready!
 
-**Report Details:**
-- Report Type: {st.session_state.selected_report_type}
-- Location: {st.session_state.selected_location}
-- Amount Paid: {report_info['price']}
-- Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Reports ordered:
+{report_lines}
+
+Total Amount Paid: ${total_price:.2f} ({len(all_reports)} x {report_info['price']})
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 Your report PDF is attached to this email.
 
@@ -359,32 +399,49 @@ Thank you for using Sentinel Access!
 
 Best regards,
 Sentinel Access Team
-                    """
+                """
+                
+                if send_email_with_attachment(
+                    st.session_state.user_email,
+                    email_subject,
+                    email_body,
+                    all_pdf_paths[0]
+                ):
+                    st.success(f"📧 Email sent to {st.session_state.user_email}!")
+                    st.divider()
                     
-                    if send_email_with_attachment(
-                        st.session_state.user_email,
-                        email_subject,
-                        email_body,
-                        pdf_path
-                    ):
-                        st.success(f"📧 Email sent to {st.session_state.user_email}!")
-                        st.divider()
-                        
-                        # Show order summary
-                        st.success("✅ ORDER COMPLETE!")
+                    # Show order summary
+                    st.success("✅ ORDER COMPLETE!")
+                    for r, p in zip(all_reports, all_pdf_paths):
                         st.markdown(f"""
-                        **Order Details:**
-                        - 📋 {st.session_state.selected_report_type}
-                        - 📍 {st.session_state.selected_location}
+                        **{r['icon']} {r['type']} - {r['location']}**
                         - 👤 {st.session_state.username}
                         - 📧 {st.session_state.user_email}
-                        - 💰 {report_info['price']}
-                        - 📁 PDF: `{os.path.basename(pdf_path)}`
+                        - 💰 {report_info['price']} per report
+                        - 📁 PDF: `{os.path.basename(p)}`
                         """)
-                    else:
-                        st.error("❌ Failed to send email")
+                    if len(all_reports) > 1:
+                        st.markdown(f"**💰 Total: ${total_price:.2f}** ({len(all_reports)} x {report_info['price']})")
+                    
+                    # Clear queue after successful order
+                    st.session_state.reports_queue = []
                 else:
-                    st.error("❌ Failed to generate report")
+                    st.error("❌ Failed to send email")
+            elif not success:
+                st.error("❌ Failed to generate one or more reports")
+    
+    # Add Another Report button
+    if st.button("➕ Add Another Report", use_container_width=True):
+        if not st.session_state.selected_location:
+            st.error("❌ Select a location first")
+        else:
+            st.session_state.reports_queue.append({
+                "type": st.session_state.selected_report_type,
+                "location": st.session_state.selected_location,
+                "icon": report_info['icon']
+            })
+            st.success(f"✅ Added {report_info['icon']} {st.session_state.selected_report_type} @ {st.session_state.selected_location} to queue")
+            st.rerun()
 
 # ============================================================
 # RIGHT COLUMN - EXAMPLE REPORTS
@@ -427,6 +484,25 @@ with col_right:
         ⭐ Sky Clarity: 92%
         
         ✨ Best Night: Tonight
+        
+        [Download Example PDF]
+        """)
+    
+    st.divider()
+    
+    st.markdown("#### 🌤️ WEATHER REPORT")
+    
+    with st.container(border=True):
+        st.markdown("""
+        **Sample Weather Report**
+        
+        📍 Location: Cape Schanck
+        
+        🌡️ Max Temp: 24°C
+        
+        💨 Wind: 25 km/h NW
+        
+        ⚠️ Alert: NORMAL
         
         [Download Example PDF]
         """)
