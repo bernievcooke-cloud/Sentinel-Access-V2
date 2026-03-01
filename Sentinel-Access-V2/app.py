@@ -1,11 +1,26 @@
+import os
+import shutil
+import tempfile
+import time
+
 import streamlit as st
 from datetime import datetime
+
+from core.email_sender import send_report_email
+from core.report_wrapper import generate_report
 
 st.set_page_config(page_title='Sentinel Access', layout='wide')
 
 # Initialize session state
 if 'locations_list' not in st.session_state:
     st.session_state.locations_list = ['Bells Beach', 'Point Leo', 'Melbourne', 'Sydney']
+if 'locations_coords' not in st.session_state:
+    st.session_state.locations_coords = {
+        'Bells Beach': (-38.371, 144.282),
+        'Point Leo':   (-38.423, 145.074),
+        'Melbourne':   (-37.814, 144.963),
+        'Sydney':      (-33.869, 151.209),
+    }
 if 'selected_reports' not in st.session_state:
     st.session_state.selected_reports = []
 if 'progress_status' not in st.session_state:
@@ -18,6 +33,7 @@ if 'user_email' not in st.session_state:
 def add_location(name, lat, lon):
     st.session_state.locations_list.append(name)
     st.session_state.locations_list = sorted(list(set(st.session_state.locations_list)))
+    st.session_state.locations_coords[name] = (lat, lon)
 
 col1, col2, col3 = st.columns([1, 1.5, 1])
 
@@ -108,23 +124,67 @@ with col2:
     if st.session_state.progress_status == "processing":
         st.write("### ⚙️ System Progress")
         progress_bar = st.progress(0)
-        
-        steps = [
-            ("Step 1/4: Validating locations...", 25),
-            ("Step 2/4: Generating reports...", 50),
-            ("Step 3/4: Processing payment...", 75),
-            ("Step 4/4: Sending email to " + st.session_state.user_email + "...", 100),
+
+        # Map UI report type labels to worker keywords
+        type_map = {
+            "Surf Report":      "surf",
+            "Night Sky Report": "sky",
+            "Weather Report":   "weather",
+        }
+
+        # Step 1: Validate locations
+        st.info("Step 1/4: Validating locations...")
+        progress_bar.progress(25)
+        missing = [
+            r['location'] for r in st.session_state.selected_reports
+            if r['location'] not in st.session_state.locations_coords
         ]
-        
-        for step_text, progress_val in steps:
-            st.info(step_text)
-            progress_bar.progress(progress_val)
-            import time
-            time.sleep(0.3)
-        
-        st.success(f"✅ All reports generated and sent to {st.session_state.user_email}!")
-        st.session_state.progress_status = ""
-        st.session_state.selected_reports = []
+        if missing:
+            st.error(f"⚠️ Missing coordinates for: {', '.join(set(missing))}")
+            st.session_state.progress_status = ""
+        else:
+            # Step 2: Generate reports
+            st.info("Step 2/4: Generating reports...")
+            progress_bar.progress(50)
+            output_dir = tempfile.mkdtemp(prefix="sentinel_reports_")
+            pdf_paths = []
+            errors = []
+            for report in st.session_state.selected_reports:
+                try:
+                    coords = st.session_state.locations_coords[report['location']]
+                    worker_type = type_map.get(report['type'], report['type'].lower())
+                    pdf_path = generate_report(
+                        report['location'], worker_type, coords, output_dir
+                    )
+                    pdf_paths.append(pdf_path)
+                except Exception as e:
+                    errors.append(f"{report['type']} @ {report['location']}: {e}")
+
+            if errors:
+                for err in errors:
+                    st.error(f"⚠️ Report error: {err}")
+                st.session_state.progress_status = ""
+            else:
+                # Step 3: Processing payment (placeholder)
+                st.info("Step 3/4: Processing payment...")
+                progress_bar.progress(75)
+                time.sleep(0.3)
+
+                # Step 4: Send email
+                st.info(f"Step 4/4: Sending email to {st.session_state.user_email}...")
+                progress_bar.progress(100)
+                success, err_msg = send_report_email(
+                    st.session_state.user_email,
+                    st.session_state.username,
+                    pdf_paths,
+                )
+                if success:
+                    st.success(f"✅ All reports generated and sent to {st.session_state.user_email}!")
+                    st.session_state.selected_reports = []
+                else:
+                    st.error(f"⚠️ Reports generated but email failed: {err_msg}")
+                st.session_state.progress_status = ""
+                shutil.rmtree(output_dir, ignore_errors=True)
 
 # RIGHT COLUMN
 with col3:
