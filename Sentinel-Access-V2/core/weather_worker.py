@@ -225,9 +225,8 @@ def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
         print(f"GENERATING WEATHER REPORT: {location}")
         print(f"{'='*50}")
         
-        latitude = coords['latitude']
-        longitude = coords['longitude']
-        h_df, d_df = fetch_weather_data(latitude, longitude)
+        lat, lon = coords
+        h_df, d_df = fetch_weather_data(lat, lon)
         
         if h_df is None or d_df is None:
             raise Exception("Failed to fetch weather data")
@@ -297,5 +296,4 @@ def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
         import traceback
         traceback.print_exc()
         print(f"{'='*50}\n")
-
         raise
