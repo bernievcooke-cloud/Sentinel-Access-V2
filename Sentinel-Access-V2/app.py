@@ -4,72 +4,103 @@ import time
 
 st.set_page_config(page_title='Sentinel Access', layout='wide')
 
-if 'locations' not in st.session_state:
-    st.session_state.locations = []
-if 'username' not in st.session_state:
-    st.session_state.username = ""
-if 'email' not in st.session_state:
-    st.session_state.email = ""
+# Initialize session state
+if 'num_reports' not in st.session_state:
+    st.session_state.num_reports = 1
+if 'reports' not in st.session_state:
+    st.session_state.reports = []
+if 'progress_status' not in st.session_state:
+    st.session_state.progress_status = ""
 
 col1, col2, col3 = st.columns([1, 1.5, 1])
 
+# LEFT COLUMN - Instructions & Controls
 with col1:
-    st.write("### Controls")
-    if st.button("Refresh"):
+    st.write("### 📋 User Instructions")
+    st.info("""
+    **How to use Sentinel Access:**
+    
+    1. Select your location
+    2. Choose report type(s)
+    3. Click \"Add Report\" to generate multiple reports
+    4. Price updates: $5.00 per report
+    5. Click \"Generate & Pay\" when ready
+    6. System will process and email results
+    """
+    )
+    
+    st.write("### 🔄 Controls")
+    if st.button("🔄 Refresh Page"):
         st.rerun()
-    st.write("### Your Details")
-    st.session_state.username = st.text_input("Username", st.session_state.username)
-    st.session_state.email = st.text_input("Email", st.session_state.email)
 
+# MIDDLE COLUMN - Report Generation
 with col2:
-    st.write("### Create Location")
-    loc_input = st.text_input("Location Name")
-    if st.button("Save Location"):
-        if loc_input:
-            st.session_state.locations.append(loc_input)
-            st.success(f"Saved: {loc_input}")
+    st.write("### 📊 Generate Reports")
     
-    st.write("### Order Report")
-    st.selectbox("Report Type", ["Surf Report", "Night Sky Report", "Weather Report"])
+    # Location selection
+    location = st.text_input("Enter Location")
     
-    if st.session_state.locations:
-        st.selectbox("Select Location", st.session_state.locations)
-    else:
-        st.error("No locations - create one first!")
+    # Report type selection
+    report_type = st.selectbox("Select Report Type", 
+                               ["Surf Report", "Night Sky Report", "Weather Report"])
     
-    st.metric("Price", "$29.99")
+    st.write("### 📈 Your Reports")
+    st.write(f"**Number of Reports: {st.session_state.num_reports}**")
     
-    if st.button("GENERATE & PAY"):
-        pb = st.progress(0)
-        st.info("Step 1/4: Generating...")
-        pb.progress(25)
-        time.sleep(1)
-        st.success("Step 1 done")
-        
-        st.info("Step 2/4: Payment...")
-        pb.progress(50)
-        time.sleep(1)
-        st.success("Step 2 done")
-        
-        st.info("Step 3/4: Email...")
-        pb.progress(75)
-        time.sleep(1)
-        st.success("Step 3 done")
-        
-        st.info("Step 4/4: Finalizing...")
-        pb.progress(100)
-        time.sleep(1)
-        st.success("Complete!")
-        
-        if st.button("Add Another Report"):
+    # Calculate price
+    price_per_report = 5.00
+    total_price = st.session_state.num_reports * price_per_report
+    
+    st.metric("Total Price", f"${total_price:.2f}")
+    
+    # Add Report button
+    col_add, col_gen = st.columns(2)
+    with col_add:
+        if st.button("➕ Add Report"):
+            st.session_state.num_reports += 1
+            if location:
+                st.session_state.reports.append({
+                    'location': location,
+                    'type': report_type
+                })
             st.rerun()
+    
+    with col_gen:
+        if st.button("✅ Generate & Pay"):
+            st.session_state.progress_status = "processing"
+    
+    # System Progress Box
+    if st.session_state.progress_status == "processing":
+        st.write("### ⚙️ System Progress")
+        progress_bar = st.progress(0)
+        
+        steps = [
+            ("Step 1/4: Validating location...", 25),
+            ("Step 2/4: Generating reports...", 50),
+            ("Step 3/4: Processing payment...", 75),
+            ("Step 4/4: Sending email...", 100),
+        ]
+        
+        for step_text, progress_val in steps:
+            st.info(step_text)
+            progress_bar.progress(progress_val)
+            time.sleep(0.5)
+        
+        st.success("✅ All reports generated and email sent!")
+        st.session_state.progress_status = ""
 
+# RIGHT COLUMN - Example Reports
 with col3:
-    st.write("### Example Reports")
+    st.write("### 📚 Example Reports")
+    
     st.write("**Surf Report**")
     st.write("Location: Bells Beach | Waves: 2.1m | Condition: EXCELLENT")
+    st.divider()
+    
     st.write("**Night Sky Report**")
     st.write("Location: Point Leo | Moon: Waxing | Clarity: 92%")
+    st.divider()
+    
     st.write("**Weather Report**")
     st.write("Location: Melbourne | Temp: 22C | Wind: 15 km/h")
 
