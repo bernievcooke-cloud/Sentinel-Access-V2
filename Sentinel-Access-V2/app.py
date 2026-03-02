@@ -89,7 +89,7 @@ with col2:
     # Step 1: Select Report Type
     st.write("**Step 1: Select Report Type**")
     report_type = st.selectbox("Report Type", 
-                               ["Surf Report", "Night Sky Report", "Weather Report", "Trip Planner"],
+                               ["Surf Report", "Night Sky Report", "Weather Report", "Trip Report"],
                                key="report_type")
     
     # Step 2: Select Location
@@ -176,7 +176,7 @@ with col2:
             "Surf Report":      "surf",
             "Night Sky Report": "sky",
             "Weather Report":   "weather",
-            "Trip Planner":     "trip",
+            "Trip Report":     "trip",
         }
 
         # Step 1: Validate locations
@@ -248,6 +248,10 @@ with col3:
     st.write("**Weather Report**")
     st.write("Location: Melbourne | Temp: 22C | Wind: 15 km/h")
 
-st.divider()
-st.caption(f"© 2026 Sentinel Access | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.write ("**Location Report**") 
+    st.write("Location: Bells Beach)
+    st.divider()
+         
+    st.caption(f"© 2026 Sentinel Access | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
 
