@@ -15,23 +15,25 @@ except ImportError as e:
         raise Exception("Sky Worker not found")
     def weather_report(*args, **kwargs):
         raise Exception("Weather Worker not found")
+    def trip_report(*args, **kwargs):
+        raise Exception("Trip Worker not found")
 
-def generate_report(location, report_type, coords, output_dir):
+def generate_report(location, report_type, coords, output_dir, trip_details=None):
     """
     Main report generator - routes to correct worker
     """
-    
+
     if report_type.lower() == "surf":
         return surf_report(location, report_type, coords, output_dir)
-    
+
     elif report_type.lower() in ("night", "sky"):
         return sky_report(location, report_type, coords, output_dir)
-    
+
     elif report_type.lower() == "weather":
         return weather_report(location, report_type, coords, output_dir)
-    
+
+    elif report_type.lower() == "trip":
+        return trip_report(location, report_type, coords, output_dir, trip_details)
+
     else:
-
         raise Exception(f"Unknown Report Type: {report_type}")
-
-
