@@ -47,7 +47,7 @@ def generate_report(location, report_type, coords, output_dir, trip_details=None
         return surf_report(location, report_type, coords, output_dir)
     
     elif report_type.lower() in ("night", "sky"):
-        return sky_report(location, report_type, coords, output_dir)
+        return sky_report(location, coords, output_dir)
     
     elif report_type.lower() == "weather":
         return weather_report(location, coords, output_dir)
