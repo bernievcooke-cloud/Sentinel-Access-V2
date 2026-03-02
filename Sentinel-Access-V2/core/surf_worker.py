@@ -158,8 +158,8 @@ def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
     ]
     doc.build(story)
     
-<<<<<<< HEAD
+
     return ppath
-=======
-    return ppath
->>>>>>> 9aec95fb3bdf4ed49caec1d7c7d69e1f974b2ea9
+
+
+
