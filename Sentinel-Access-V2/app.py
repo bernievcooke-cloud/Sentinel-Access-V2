@@ -32,7 +32,7 @@ def _load_locations_from_json():
         print(f"⚠️ Could not load locations.json, using defaults: {e}")
         return _FALLBACK_COORDS
 
-location_manager = LocationManager("./output")
+location_manager = LocationManager()
 
 # Initialize session state
 if 'locations_list' not in st.session_state or 'locations_coords' not in st.session_state:
