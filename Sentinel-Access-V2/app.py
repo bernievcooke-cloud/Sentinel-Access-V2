@@ -1,26 +1,43 @@
+import json
 import os
 import shutil
 import tempfile
 import time
+from pathlib import Path
 
 import streamlit as st
 from datetime import datetime
 
 from core.email_sender import send_report_email
+from core.location_manager import LocationManager
 from core.report_wrapper import generate_report
 
 st.set_page_config(page_title='Sentinel Access', layout='wide')
 
+# Load locations from config/locations.json, with fallback to hardcoded defaults
+_FALLBACK_COORDS = {
+    'Bells Beach': (-38.371, 144.282),
+    'Point Leo':   (-38.423, 145.074),
+    'Melbourne':   (-37.814, 144.963),
+    'Sydney':      (-33.869, 151.209),
+}
+
+def _load_locations_from_json():
+    json_path = Path(__file__).parent / 'config' / 'locations.json'
+    try:
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+        return {name: tuple(coords) for name, coords in data.items()}
+    except Exception as e:
+        print(f"⚠️ Could not load locations.json, using defaults: {e}")
+        return _FALLBACK_COORDS
+location_manager = LocationManager("./output")
+
 # Initialize session state
-if 'locations_list' not in st.session_state:
-    st.session_state.locations_list = ['Bells Beach', 'Point Leo', 'Melbourne', 'Sydney']
-if 'locations_coords' not in st.session_state:
-    st.session_state.locations_coords = {
-        'Bells Beach': (-38.371, 144.282),
-        'Point Leo':   (-38.423, 145.074),
-        'Melbourne':   (-37.814, 144.963),
-        'Sydney':      (-33.869, 151.209),
-    }
+if 'locations_list' not in st.session_state or 'locations_coords' not in st.session_state:
+    _coords = _load_locations_from_json()
+    st.session_state.locations_coords = _coords
+    st.session_state.locations_list = sorted(_coords.keys())
 if 'selected_reports' not in st.session_state:
     st.session_state.selected_reports = []
 if 'progress_status' not in st.session_state:
@@ -29,11 +46,16 @@ if 'username' not in st.session_state:
     st.session_state.username = ""
 if 'user_email' not in st.session_state:
     st.session_state.user_email = ""
+if 'geocode_result' not in st.session_state:
+    st.session_state.geocode_result = None
+if 'geocode_search_term' not in st.session_state:
+    st.session_state.geocode_search_term = ""
 
-def add_location(name, lat, lon):
+def add_location(name, lat, lon, source=None, verified=False):
     st.session_state.locations_list.append(name)
     st.session_state.locations_list = sorted(list(set(st.session_state.locations_list)))
     st.session_state.locations_coords[name] = (lat, lon)
+    location_manager.add_location(name, lat, lon, source=source, verified=verified)
 
 col1, col2, col3 = st.columns([1, 1.5, 1])
 
@@ -79,16 +101,40 @@ with col2:
     # Step 3: Create New Location if needed
     with st.expander("➕ Create New Location"):
         new_loc_name = st.text_input("Location Name (e.g., 'Bondi Beach')", key="new_loc_name")
-        new_loc_lat = st.number_input("Latitude", value=-33.0, format="%.4f", key="new_loc_lat")
-        new_loc_lon = st.number_input("Longitude", value=151.0, format="%.4f", key="new_loc_lon")
-        
-        if st.button("✅ Add New Location"):
+
+        if st.button("🔍 Search Location"):
             if new_loc_name:
-                add_location(new_loc_name, new_loc_lat, new_loc_lon)
-                st.success(f"✅ Added: {new_loc_name} ({new_loc_lat}, {new_loc_lon})")
-                st.rerun()
+                with st.spinner("Searching..."):
+                    result = location_manager.geocode_location(new_loc_name)
+                if result:
+                    st.session_state.geocode_result = result
+                    st.session_state.geocode_search_term = new_loc_name
+                else:
+                    st.session_state.geocode_result = None
+                    st.session_state.geocode_search_term = ""
+                    st.error(f"❌ Location not found: '{new_loc_name}'. Try a different search term.")
             else:
                 st.error("Please enter a location name")
+
+        if (st.session_state.geocode_result
+                and st.session_state.geocode_search_term == new_loc_name):
+            result = st.session_state.geocode_result
+            st.success(f"📍 Found: {result['display_name']}")
+            st.write(f"**Coordinates:** {result['latitude']}, {result['longitude']}")
+            st.caption(f"Source: {result['source']}")
+
+            if st.button("✅ Confirm & Add Location"):
+                add_location(
+                    new_loc_name,
+                    result['latitude'],
+                    result['longitude'],
+                    source=result['source'],
+                    verified=result['verified']
+                )
+                st.session_state.geocode_result = None
+                st.session_state.geocode_search_term = ""
+                st.success(f"✅ Added: {new_loc_name} ({result['latitude']}, {result['longitude']})")
+                st.rerun()
     
     # Step 4: Add Report Button
     st.write("**Step 3: Add Report**")
