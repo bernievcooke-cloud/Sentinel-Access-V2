@@ -6,7 +6,7 @@ try:
     from core.surf_worker import generate_report as surf_report
     from core.sky_worker import generate_report as sky_report
     from core.weather_worker import generate_report as weather_report
-    from core.trip_worker import generate_report as trip_report
+    from core.trip_planner import generate_report as trip_report
 except ImportError as e:
     print(f"Import error: {e}")
     def surf_report(*args, **kwargs):
@@ -33,3 +33,4 @@ def generate_report(location, report_type, coords, output_dir):
     else:
 
         raise Exception(f"Unknown Report Type: {report_type}")
+
