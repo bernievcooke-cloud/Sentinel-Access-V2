@@ -29,15 +29,23 @@ def generate_report(location, report_type, coords, output_dir, trip_details=None
     y_position -= 20
     
     if trip_details:
+        vehicle = trip_details.get('vehicle_type', 'Not specified')
+        fuel = trip_details.get('fuel_type', 'Not specified')
+        cost = trip_details.get('fuel_cost', 0)
+        duration = trip_details.get('trip_duration', 0)
+        accommodation = trip_details.get('accommodation', 'Not specified')
+        
         details = [
-            f"Vehicle Type: {trip_details.get('vehicle_type', 'Not specified')}",
-            f"Fuel Type: {trip_details.get('fuel_type', 'Not specified')}",
-            f"Est. Fuel Cost: ${trip_details.get('fuel_cost', 0)}",
-            f"Trip Duration: {trip_details.get('trip_duration', 0)} days",
-            f"Accommodation: {trip_details.get('accommodation', 'Not specified')}",
+            f"Location: {location}",
+            f"Vehicle Type: {vehicle}",
+            f"Fuel Type: {fuel}",
+            f"Est. Fuel Cost: ${cost}",
+            f"Trip Duration: {duration} days",
+            f"Accommodation: {accommodation}",
         ]
     else:
         details = [
+            f"Location: {location}",
             "Vehicle Type: Car/SUV",
             "Fuel Type: Petrol/Diesel",
             "Est. Fuel Cost: $50-100",
@@ -58,18 +66,58 @@ def generate_report(location, report_type, coords, output_dir, trip_details=None
     y_position -= 18
     
     if trip_details and trip_details.get('activities'):
-        for activity in trip_details['activities']:
-            c.drawString(70, y_position, f"• {activity}")
-            y_position -= 15
+        activities = trip_details['activities']
+        if isinstance(activities, list) and len(activities) > 0:
+            for activity in activities:
+                if y_position < 50:
+                    c.showPage()
+                    c.setFont("Helvetica", 11)
+                    y_position = height - 50
+                c.drawString(70, y_position, f"• {activity}")
+                y_position -= 15
+        else:
+            c.drawString(70, y_position, "• No activities specified")
     else:
-        activities = ["Hiking", "Photography", "Sightseeing"]
-        for activity in activities:
+        default_activities = ["Hiking", "Photography", "Sightseeing"]
+        for activity in default_activities:
             c.drawString(70, y_position, f"• {activity}")
             y_position -= 15
+    
+    # Recommendations Section
+    y_position -= 10
+    if y_position < 100:
+        c.showPage()
+        c.setFont("Helvetica-Bold", 12)
+        y_position = height - 50
+    
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(50, y_position, "Trip Recommendations:")
+    
+    c.setFont("Helvetica", 11)
+    y_position -= 18
+    
+    recommendations = [
+        "• Check weather conditions before departure",
+        "• Ensure vehicle maintenance is up to date",
+        "• Book accommodations in advance",
+        "• Plan daily itinerary and routes",
+        "• Pack appropriate gear for activities",
+        "• Keep emergency contacts and documents",
+        "• Set budget for meals and attractions",
+    ]
+    
+    for rec in recommendations:
+        if y_position < 50:
+            c.showPage()
+            c.setFont("Helvetica", 11)
+            y_position = height - 50
+        c.drawString(70, y_position, rec)
+        y_position -= 15
     
     # Footer
     c.setFont("Helvetica", 9)
     c.drawString(50, 30, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    c.drawString(50, 15, "Sentinel Access - Trip Planner Report")
     
     c.save()
     return pdf_path
