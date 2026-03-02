@@ -5,6 +5,7 @@ Reads from locations.json file
 
 import os
 import json
+import requests
 from pathlib import Path
 from datetime import datetime
 
@@ -45,15 +46,64 @@ class LocationManager:
         
         return locations
     
-    def add_location(self, location_name, latitude, longitude):
+    def geocode_location(self, search_term):
+        """
+        Lookup coordinates for a location using OpenStreetMap Nominatim API
+
+        Args:
+            search_term: Location name to search for
+
+        Returns:
+            dict: {latitude, longitude, display_name, source, verified} or None if not found
+        """
+        try:
+            params = {
+                'q': search_term,
+                'format': 'json',
+                'limit': 1
+            }
+            headers = {'User-Agent': 'SentinelAccess/1.0 (https://github.com/bernievcooke-cloud/Sentinel-Access)'}
+            response = requests.get(
+                'https://nominatim.openstreetmap.org/search',
+                params=params,
+                headers=headers,
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if data:
+                result = data[0]
+                return {
+                    'latitude': round(float(result['lat']), 6),
+                    'longitude': round(float(result['lon']), 6),
+                    'display_name': result['display_name'],
+                    'source': 'OpenStreetMap Nominatim',
+                    'verified': True
+                }
+            return None
+
+        except requests.RequestException as e:
+            print(f"❌ Geocoding network error: {e}")
+            return None
+        except (KeyError, ValueError) as e:
+            print(f"❌ Geocoding response parse error: {e}")
+            return None
+        except Exception as e:
+            print(f"❌ Geocoding error: {e}")
+            return None
+
+    def add_location(self, location_name, latitude, longitude, source=None, verified=False):
         """
         Add a new location to locations.json
-        
+
         Args:
             location_name: Name of location
             latitude: Latitude coordinate
             longitude: Longitude coordinate
-        
+            source: Optional source reference (e.g. 'OpenStreetMap Nominatim')
+            verified: Whether coordinates have been verified
+
         Returns:
             bool: True if successful
         """
@@ -64,21 +114,27 @@ class LocationManager:
                     locations = json.load(f)
             else:
                 locations = {}
-            
-            # Add new location
-            locations[location_name] = {
+
+            # Build location entry with optional source metadata
+            entry = {
                 "latitude": latitude,
                 "longitude": longitude
             }
-            
+            if source is not None:
+                entry["source"] = source
+                entry["verified"] = verified
+
+            # Add new location
+            locations[location_name] = entry
+
             # Write back to file
             self.locations_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.locations_file, 'w') as f:
                 json.dump(locations, f, indent=2)
-            
+
             print(f"✅ Location added: {location_name}")
             return True
-            
+
         except Exception as e:
             print(f"❌ Error adding location: {e}")
             return False
