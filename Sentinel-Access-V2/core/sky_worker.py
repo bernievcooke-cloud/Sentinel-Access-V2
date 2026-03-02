@@ -1,143 +1,138 @@
-"""
-Night Sky Report Generator
-Generates comprehensive sky forecasts with moon phase, clarity, and viewing conditions
-"""
-
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from datetime import datetime
 import os
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from datetime import datetime
+from io import BytesIO
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+from reportlab.lib.units import cm
+import requests
 
-try:
-    from core.location_manager import LocationManager as _LocationManager
-except ImportError:
-    _LocationManager = None
+# Import global settings
+from config.settings import BASE_OUTPUT
 
-def generate_report(location, report_type, coords, output_dir):
-    """Generate Night Sky Report - returns PDF path"""
+# ----------------------
+# 1. ASTRO LOGIC
+# ----------------------
+def get_moon_phase(d=None):
+    """Calculates moon phase (0-30 days) and returns name and icon."""
+    if d is None: d = datetime.now()
+    # Conway's Moon Phase Algorithm
+    year, month, day = d.year, d.month, d.day
+    if month <= 2:
+        year -= 1
+        month += 12
+    a = year // 100
+    b = a // 4
+    c = 2 - a + b
+    e = int(365.25 * (year + 4716))
+    f = int(30.6001 * (month + 1))
+    jd = e + f + day + c - 1524.5
+    days_since_new = (jd - 2451549.5) % 29.53
+    
+    if days_since_new < 1.84: return "New Moon", "🌑"
+    elif days_since_new < 5.53: return "Waxing Crescent", "🌒"
+    elif days_since_new < 9.22: return "First Quarter", "🌓"
+    elif days_since_new < 12.91: return "Waxing Gibbous", "🌔"
+    elif days_since_new < 16.61: return "Full Moon", "🌕"
+    elif days_since_new < 20.30: return "Waning Gibbous", "🌖"
+    elif days_since_new < 23.99: return "Last Quarter", "🌗"
+    elif days_since_new < 27.68: return "Waning Crescent", "🌘"
+    else: return "New Moon", "🌑"
+
+def check_astro_window(row):
+    cloud = row['cloud_cover']
+    if cloud <= 15: return "CLEAR SKY"
+    if cloud <= 30: return "PARTIAL"
+    return None
+
+def fetch_sky_data(lat, lon):
     try:
-        # Use LocationManager to extract proper coordinates
-        if _LocationManager is not None:
-            lm = _LocationManager()
-            if isinstance(coords, dict):
-                coord_dict = lm.get_location_coords(coords)
-            elif isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                lat, lon = float(coords[0]), float(coords[1])
-                coord_dict = {'latitude': lat, 'longitude': lon} if (lat != 0 and lon != 0) else lm.geocode_location(location)
-            else:
-                coord_dict = lm.geocode_location(location)
-            latitude = coord_dict.get('latitude', 0)
-            longitude = coord_dict.get('longitude', 0)
-        else:
-            latitude = float(coords[0]) if isinstance(coords, (list, tuple)) else 0
-            longitude = float(coords[1]) if isinstance(coords, (list, tuple)) else 0
-        pdf_filename = f"sky_report_{location.replace(' ', '_')}.pdf"
-        pdf_path = os.path.join(output_dir, pdf_filename)
-        
-        c = canvas.Canvas(pdf_path, pagesize=letter)
-        width, height = letter
-        
-        # Title
-        c.setFont("Helvetica-Bold", 24)
-        c.drawString(50, height - 50, "🌌 NIGHT SKY REPORT")
-        
-        # Location and coordinates
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(50, height - 80, f"Location: {location}")
-        
-        c.setFont("Helvetica", 11)
-        c.drawString(50, height - 100, f"Coordinates: {abs(latitude):.4f}° S, {longitude:.4f}° E")
-        
-        # Divider
-        c.line(50, height - 110, 500, height - 110)
-        
-        # Tonight's Sky
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(50, height - 130, "Tonight's Sky Conditions:")
-        
-        c.setFont("Helvetica", 11)
-        tonight = [
-            "Moon Phase: Waxing Gibbous 🌔",
-            "Moon Illumination: 72%",
-            "Moon Rise: 18:30",
-            "Moon Set: 06:45",
-            "Sky Clarity: 92%",
-            "Seeing Conditions: Excellent",
-            "Cloud Cover: 5%",
-            "Atmospheric Seeing: Perfect",
-        ]
-        
-        y_pos = height - 150
-        for item in tonight:
-            c.drawString(70, y_pos, item)
-            y_pos -= 20
-        
-        # Best Viewing Times
-        y_pos -= 20
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(50, y_pos, "Best Viewing Times:")
-        
-        y_pos -= 20
-        c.setFont("Helvetica", 11)
-        times = [
-            "Astronomical Twilight Ends: 21:15",
-            "Peak Viewing Window: 22:00 - 02:00",
-            "Best for Deep Sky: 23:30 - 01:30",
-            "Astronomical Twilight Begins: 04:45",
-        ]
-        
-        for time in times:
-            c.drawString(70, y_pos, time)
-            y_pos -= 20
-        
-        # Visible Objects
-        y_pos -= 20
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(50, y_pos, "Visible Objects Tonight:")
-        
-        y_pos -= 20
-        c.setFont("Helvetica", 11)
-        objects = [
-            "Bright Stars: Sirius, Betelgeuse, Rigel, Capella",
-            "Planets: Venus, Jupiter, Saturn",
-            "Deep Sky: Orion Nebula (M42), Pleiades (M45)",
-            "Constellations: Orion, Gemini, Taurus, Auriga",
-        ]
-        
-        for obj in objects:
-            c.drawString(70, y_pos, obj)
-            y_pos -= 20
-        
-        # 7-Night Forecast
-        y_pos -= 20
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(50, y_pos, "7-Night Forecast:")
-        
-        y_pos -= 20
-        c.setFont("Helvetica", 10)
-        forecast = [
-            "Mon: 85% Clear - Excellent",
-            "Tue: 70% Clear - Good",
-            "Wed: 92% Clear - Excellent",
-            "Thu: 60% Clear - Moderate",
-            "Fri: 88% Clear - Excellent",
-            "Sat: 75% Clear - Good",
-            "Sun: 50% Clear - Fair",
-        ]
-        
-        for day in forecast:
-            c.drawString(70, y_pos, day)
-            y_pos -= 15
-        
-        # Footer
-        c.setFont("Helvetica", 9)
-        c.drawString(50, 30, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        c.drawString(50, 15, "Sentinel Access - Night Sky Report")
-        
-        c.save()
-        print(f"✅ Sky Report created: {pdf_path}")
-        return pdf_path
-        
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=cloud_cover,visibility,relative_humidity_2m&timezone=auto"
+        df = pd.DataFrame(requests.get(url).json()['hourly'])
+        df['time'] = pd.to_datetime(df['time'])
+        return df
     except Exception as e:
-        print(f"❌ Error generating sky report: {e}")
-        raise
+        print(f"Sky data fetch error: {e}")
+        return None
+
+# ----------------------
+# 2. PLOTTING
+# ----------------------
+def generate_sky_daily(df, loc_name):
+    now = datetime.now()
+    day_df = df[df["time"].dt.date == now.date()].copy()
+    fig, ax1 = plt.subplots(figsize=(11,5.5))
+
+    ax1.plot(day_df["time"], 100 - day_df["cloud_cover"], color="#4b0082", lw=3, label="Clarity %")
+    ax1.fill_between(day_df["time"], 100 - day_df["cloud_cover"], color="#4b0082", alpha=0.1)
+
+    for i, row in day_df.dropna(subset=['cloud_cover']).iterrows():
+        if check_astro_window(row):
+            ax1.scatter(row["time"], 100 - row["cloud_cover"], color="gold", marker="*", s=100, zorder=5)
+
+    ax1.axvline(now, color="red", lw=2, ls="--", label="Current Time")
+    ax1.set_ylim(0,110)
+    ax1.set_title(f"ASTRO STRATEGY: {loc_name.upper()}", fontweight="bold", fontsize=15)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    plt.tight_layout()
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png', dpi=140)
+    plt.close()
+    buf.seek(0)
+    return buf
+
+# ----------------------
+# 3. PDF BUILDER (V3.10 Optimized)
+# ----------------------
+def generate_report(location, coords, output_dir=BASE_OUTPUT):
+    lat, lon = coords
+    df = fetch_sky_data(lat, lon)
+    if df is None: raise RuntimeError("Failed to fetch sky data.")
+
+    # Folder Handling
+    loc_dir = os.path.join(output_dir, location)
+    os.makedirs(loc_dir, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+    filename = f"Sky_Report_{location.replace(' ', '_')}_{timestamp}.pdf"
+    save_path = os.path.join(loc_dir, filename)
+
+    # Moon Phase Calculation
+    phase_name, phase_icon = get_moon_phase()
+
+    doc = SimpleDocTemplate(save_path, pagesize=A4, topMargin=0.5*cm, bottomMargin=0.5*cm)
+    styles = getSampleStyleSheet()
+
+    # Strategy Table
+    t_data = [
+        ['SKY STRATEGY', f"TARGET SITE: {location.upper()}"],
+        ['MOON PHASE', f"{phase_icon} {phase_name.upper()}"]
+    ]
+    t = Table(t_data, colWidths=[5*cm, 13.5*cm])
+    t.setStyle(TableStyle([
+        ('BACKGROUND',(0,0),(0,0),colors.black),
+        ('TEXTCOLOR',(0,0),(0,0),colors.white),
+        ('BACKGROUND',(0,1),(0,1),colors.indigo),
+        ('TEXTCOLOR',(0,1),(0,1),colors.white),
+        ('ALIGN',(0,0),(-1,-1),'CENTER'),
+        ('FONTNAME',(0,0),(-1,-1),'Helvetica-Bold'),
+        ('GRID',(0,0),(-1,-1),0.5,colors.lightgrey)
+    ]))
+
+    story = [
+        Paragraph(f"<b>NIGHT SKY SENTINEL REPORT</b>", styles["Title"]),
+        t, Spacer(1,15),
+        Image(generate_sky_daily(df, location), 19*cm, 10*cm),
+        Spacer(1,15),
+        Paragraph(f"<b>Astro Analysis:</b> Gold Stars indicate 70%+ Clarity (Optimal for Viewing).<br/>Coords: {coords} | Time: {datetime.now().strftime('%H:%M')}", styles["Normal"])
+    ]
+    doc.build(story)
+    
+    return save_path

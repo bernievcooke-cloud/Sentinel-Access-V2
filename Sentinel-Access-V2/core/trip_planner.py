@@ -1,3 +1,8 @@
+from streamlit.config import cat
+
+from core import trip_worker
+
+
 cat > trip_worker.py << 'EOF'
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
