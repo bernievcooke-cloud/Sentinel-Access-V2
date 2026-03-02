@@ -22,9 +22,6 @@ try:
 except ImportError:
     BASE_OUTPUT = r"C:\OneDrive\Public Reports A\OUTPUT"
 
-# ============================================================
-# 1. THE ENGINE (Strategy Integrity Maintained)
-# ============================================================
 def deg_to_compass(deg):
     if deg is None or (isinstance(deg, float) and np.isnan(deg)): 
         return "N/A"
@@ -34,14 +31,12 @@ def deg_to_compass(deg):
     return dirs[idx]
 
 def check_weather_alerts(row):
-    """Identify alert conditions for weather data"""
     t = row.get('temperature_2m', 0.0)
     d = row.get('wind_direction_10m', 0.0)
     g = row.get('wind_gusts_10m', 0.0)
     p = row.get('precipitation', 0.0)
     w_code = row.get('weather_code', 0)
     
-    # Alert Logic - Maintained from original weather_worker
     alerts = []
     if t > 28 and (d >= 315 or d <= 45):
         alerts.append("fire")
@@ -55,7 +50,6 @@ def check_weather_alerts(row):
     return alerts if alerts else None
 
 def fetch_weather_data(lat, lon):
-    """Fetch hourly and daily weather data from Open-Meteo API"""
     try:
         h_url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
                  f"&hourly=temperature_2m,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code&timezone=auto&forecast_days=3")
@@ -68,12 +62,10 @@ def fetch_weather_data(lat, lon):
         h_df = pd.DataFrame(h_resp['hourly'])
         d_df = pd.DataFrame(d_resp['daily'])
         
-        # Sanitize hourly data
         for col in ['temperature_2m', 'precipitation', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m', 'weather_code']:
             if col in h_df.columns:
                 h_df[col] = pd.to_numeric(h_df[col], errors='coerce').fillna(0.0)
         
-        # Sanitize daily data
         for col in ['temperature_2m_max', 'wind_speed_10m_max', 'wind_gusts_10m_max', 'wind_direction_10m_dominant', 'precipitation_sum', 'weather_code']:
             if col in d_df.columns:
                 d_df[col] = pd.to_numeric(d_df[col], errors='coerce').fillna(0.0)
@@ -86,11 +78,7 @@ def fetch_weather_data(lat, lon):
         print(f"Data Fetch Error: {e}")
         return None, None
 
-# ============================================================
-# 2. CHARTING ENGINE
-# ============================================================
 def generate_daily(df, location_name):
-    """Generate hourly weather chart for current day"""
     now_dt = datetime.now()
     start_bound = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
     day_df = df[(df["time"] >= start_bound) & (df["time"] <= start_bound + timedelta(hours=23))].copy()
@@ -100,27 +88,20 @@ def generate_daily(df, location_name):
     ax_rain = ax1.twinx()
     ax_rain.spines["right"].set_position(("axes", 1.12))
 
-    # Plot temperature - actual vs forecast
     actual = day_df[day_df["time"] <= now_dt].copy()
     forecast = day_df[day_df["time"] >= now_dt].copy()
     
     l1a, = ax1.plot(actual["time"], actual["temperature_2m"], 'r-', lw=2.5, label="Actual Temp")
     l1f, = ax1.plot(forecast["time"], forecast["temperature_2m"], 'r--', lw=2.5, label="Forecast Temp")
-    
-    # Plot wind - actual vs forecast
     l2a, = ax_wind.plot(actual["time"], actual["wind_speed_10m"], 'g-', lw=1.5, label="Actual Wind")
     l2f, = ax_wind.plot(forecast["time"], forecast["wind_speed_10m"], 'g--', lw=1.5, label="Forecast Wind")
-    
-    # Plot rain
     l3, = ax_rain.bar(day_df["time"], day_df["precipitation"], color="blue", alpha=0.2, width=0.04, label="Rain")
 
-    # Wind direction markers and alert markers (every 3 hours)
     for i, row in day_df.iloc[::3].iterrows():
         compass = deg_to_compass(row['wind_direction_10m'])
         ax_wind.annotate(compass, (row["time"], row['wind_speed_10m']), xytext=(0, 7), 
                          textcoords="offset points", ha='center', fontsize=9, fontweight='bold', color='darkgreen')
         
-        # Alert markers
         alerts = check_weather_alerts(row)
         if alerts:
             if 'fire' in alerts:
@@ -134,12 +115,10 @@ def generate_daily(df, location_name):
     ax1.set_ylabel("Temp (°C)", color="red", fontweight="bold")
     ax_wind.set_ylabel("Wind (km/h)", color="darkgreen", fontweight="bold")
     ax_rain.set_ylabel("Rain (mm)", color="blue", fontweight="bold")
-    
     ax1.set_title(f"{location_name.upper()} WEATHER FOR {start_bound.strftime('%A %d %b').upper()}", fontweight="bold", fontsize=14)
     ax1.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 3, 6, 9, 12, 15, 18, 21]))
     ax1.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, p: mdates.DateFormatter("%I%p")(x).replace("AM", "A").replace("PM", "P").lstrip("0")))
     ax1.grid(True, alpha=0.15)
-    
     ax1.legend([l1a, l1f, l2a, l2f, l3], ['Actual Temp', 'Forecast Temp', 'Actual Wind', 'Forecast Wind', 'Rain'], 
                loc='upper left', fontsize=8)
     
@@ -150,28 +129,20 @@ def generate_daily(df, location_name):
     return buf
 
 def generate_weekly(df, location_name):
-    """Generate daily weather chart for 7-day outlook"""
     fig, ax1 = plt.subplots(figsize=(11, 5.5))
     ax_wind = ax1.twinx()
     ax_rain = ax1.twinx()
     ax_rain.spines["right"].set_position(("axes", 1.12))
 
-    # Plot max temperature
     l1, = ax1.plot(df["time"], df["temperature_2m_max"], 'r-', lw=2.5, label="Max Temp")
-    
-    # Plot max wind
     l2, = ax_wind.plot(df["time"], df["wind_speed_10m_max"], 'g-', lw=1.5, label="Max Wind")
-    
-    # Plot rain
     l3, = ax_rain.bar(df["time"], df["precipitation_sum"], color="blue", alpha=0.2, width=0.4, label="Rain")
 
-    # Wind direction markers and alert markers
     for i, row in df.iterrows():
         compass = deg_to_compass(row['wind_direction_10m_dominant'])
         ax_wind.annotate(compass, (row["time"], row['wind_speed_10m_max']), xytext=(0, 7), 
                          textcoords="offset points", ha='center', fontsize=8, fontweight='bold', color='darkgreen')
         
-        # Alert markers
         alerts = check_weather_alerts(row)
         if alerts:
             if 'fire' in alerts:
@@ -184,13 +155,10 @@ def generate_weekly(df, location_name):
     ax1.set_ylabel("Max Temp (°C)", color="red", fontweight="bold")
     ax_wind.set_ylabel("Max Wind (km/h)", color="darkgreen", fontweight="bold")
     ax_rain.set_ylabel("Rain (mm)", color="blue", fontweight="bold")
-    
     ax1.set_title(f"7-DAY WEATHER OUTLOOK: {location_name}", fontweight="bold", fontsize=14)
     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
     ax1.grid(True, alpha=0.15)
-    
-    ax1.legend([l1, l2, l3], ['Max Temp', 'Max Wind', 'Rain'], 
-               loc='upper left', fontsize=8)
+    ax1.legend([l1, l2, l3], ['Max Temp', 'Max Wind', 'Rain'], loc='upper left', fontsize=8)
     
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches="tight", dpi=140)
@@ -198,18 +166,22 @@ def generate_weekly(df, location_name):
     buf.seek(0)
     return buf
 
-# ============================================================
-# 3. PDF BUILDER
-# ============================================================
 def generate_report(location, coords, output_dir=BASE_OUTPUT):
     """Generate weather report with hourly and 7-day charts"""
-    lat, lon = coords
+    # Handle both tuple and dict coords formats
+    if isinstance(coords, dict):
+        lat = float(coords.get('latitude', 0))
+        lon = float(coords.get('longitude', 0))
+    elif isinstance(coords, (list, tuple)) and len(coords) == 2:
+        lat, lon = float(coords[0]), float(coords[1])
+    else:
+        raise Exception(f"Invalid coords format: {coords}")
+    
     h_df, d_df = fetch_weather_data(lat, lon)
     
     if h_df is None or d_df is None:
         raise Exception("API TIMEOUT: Data could not be retrieved.")
 
-    # Determine alert status from hourly data
     now = datetime.now()
     today_check = h_df[(h_df['time'] >= now.replace(hour=0, minute=0, second=0, microsecond=0)) & 
                        (h_df['time'] <= now + timedelta(hours=24))].copy()
@@ -220,12 +192,11 @@ def generate_report(location, coords, output_dir=BASE_OUTPUT):
         if row_alerts:
             alerts_found.extend(row_alerts)
     
-    # Build status message
     status = "✓ NORMAL CONDITIONS"
     bg = colors.honeydew
     
     if alerts_found:
-        alerts_found = list(set(alerts_found))  # Remove duplicates
+        alerts_found = list(set(alerts_found))
         status = "❌ "
         if 'fire' in alerts_found:
             status += "🔥 FIRE ALERT: HEAT & NORTH WIND"
@@ -240,7 +211,6 @@ def generate_report(location, coords, output_dir=BASE_OUTPUT):
             status += "🌧️ RAIN ALERT"
             bg = colors.lightblue
     
-    # Create output directory
     final_folder = os.path.join(output_dir, location)
     if not os.path.exists(final_folder):
         os.makedirs(final_folder)
@@ -249,11 +219,9 @@ def generate_report(location, coords, output_dir=BASE_OUTPUT):
     filename = f"Weather_Report_{location}_{timestamp}.pdf"
     ppath = os.path.join(final_folder, filename)
 
-    # Build PDF
     doc = SimpleDocTemplate(ppath, pagesize=A4, topMargin=0.5*cm, bottomMargin=0.5*cm)
     styles = getSampleStyleSheet()
     
-    # Status table
     stat_t = Table([['WEATHER STATUS', status]], colWidths=[4.5*cm, 13.5*cm])
     stat_t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (0, 0), colors.black),
@@ -275,13 +243,9 @@ def generate_report(location, coords, output_dir=BASE_OUTPUT):
     
     return ppath
 
-# ============================================================
-# 4. EXECUTION
-# ============================================================
 if __name__ == "__main__":
-    # Example usage - customize with your location details
     LOCATION = "Melbourne"
-    COORDS = (-37.8136, 144.9631)  # Melbourne coordinates
+    COORDS = (-37.8136, 144.9631)
     
     try:
         report_path = generate_report(LOCATION, COORDS)
