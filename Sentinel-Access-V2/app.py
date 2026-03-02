@@ -91,16 +91,16 @@ with col2:
     report_type = st.selectbox("Report Type", 
                                ["Surf Report", "Night Sky Report", "Weather Report", "Trip Report"],
                                key="report_type")
-        # Trip Planner Form - Show only if Trip Planner selected
-    if report_type == "Trip Planner":
-        st.write("### 🚗 Trip Planning Details")
+        # Trip Planner Form - Show only if Trip Report selected
+    if report_type == "Trip Report":
+        st.write("### 🚗 Trip Report Details")
         
         with st.form("trip_form"):
             vehicle_type = st.selectbox("Vehicle Type", ["Car", "SUV", "Van", "Truck"], key="vehicle_type")
             fuel_type = st.selectbox("Fuel Type", ["Petrol", "Diesel", "Electric", "Hybrid"], key="fuel_type")
             estimated_fuel_cost = st.number_input("Est. Fuel Cost ($)", min_value=0, value=50, key="fuel_cost")
-            activities = st.multiselect("Activities", ["Hiking", "Photography", "Sightseeing", "Camping", "Dining"], key="activities")
-            accommodation = st.selectbox("Accommodation", ["Hotel", "Airbnb", "Camping", "Hostel"], key="accommodation")
+            activities = st.multiselect("Activities", ["Hiking", "Photography", "Sightseeing", "Camping", "Dining", "Surfing", ], key="activities")
+            accommodation = st.selectbox("Accommodation", ["Hotel", "Airbnb", "Camping", "Hostel", "Free Camping", "Caravan Parks"], key="accommodation")
             trip_duration = st.slider("Trip Duration (days)", 1, 14, 3, key="trip_duration")
             
             submitted = st.form_submit_button("Save Trip Details")
@@ -276,6 +276,7 @@ with col3:
     st.write("Location: Sydney | Vehicle: Car | Duration: 3 days | Activities: Hiking, Sightseeing")
          
     st.caption(f"© 2026 Sentinel Access | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
 
 
 
