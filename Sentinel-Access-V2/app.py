@@ -1,7 +1,9 @@
+import json
 import os
 import shutil
 import tempfile
 import time
+from pathlib import Path
 
 import streamlit as st
 from datetime import datetime
@@ -11,16 +13,29 @@ from core.report_wrapper import generate_report
 
 st.set_page_config(page_title='Sentinel Access', layout='wide')
 
+# Load locations from config/locations.json, with fallback to hardcoded defaults
+_FALLBACK_COORDS = {
+    'Bells Beach': (-38.371, 144.282),
+    'Point Leo':   (-38.423, 145.074),
+    'Melbourne':   (-37.814, 144.963),
+    'Sydney':      (-33.869, 151.209),
+}
+
+def _load_locations_from_json():
+    json_path = Path(__file__).parent / 'config' / 'locations.json'
+    try:
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+        return {name: tuple(coords) for name, coords in data.items()}
+    except Exception as e:
+        print(f"⚠️ Could not load locations.json, using defaults: {e}")
+        return _FALLBACK_COORDS
+
 # Initialize session state
-if 'locations_list' not in st.session_state:
-    st.session_state.locations_list = ['Bells Beach', 'Point Leo', 'Melbourne', 'Sydney']
-if 'locations_coords' not in st.session_state:
-    st.session_state.locations_coords = {
-        'Bells Beach': (-38.371, 144.282),
-        'Point Leo':   (-38.423, 145.074),
-        'Melbourne':   (-37.814, 144.963),
-        'Sydney':      (-33.869, 151.209),
-    }
+if 'locations_list' not in st.session_state or 'locations_coords' not in st.session_state:
+    _coords = _load_locations_from_json()
+    st.session_state.locations_coords = _coords
+    st.session_state.locations_list = sorted(_coords.keys())
 if 'selected_reports' not in st.session_state:
     st.session_state.selected_reports = []
 if 'progress_status' not in st.session_state:
