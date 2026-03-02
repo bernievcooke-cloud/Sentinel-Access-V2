@@ -31,6 +31,7 @@ def _load_locations_from_json():
     except Exception as e:
         print(f"⚠️ Could not load locations.json, using defaults: {e}")
         return _FALLBACK_COORDS
+
 location_manager = LocationManager("./output")
 
 # Initialize session state
@@ -50,6 +51,8 @@ if 'geocode_result' not in st.session_state:
     st.session_state.geocode_result = None
 if 'geocode_search_term' not in st.session_state:
     st.session_state.geocode_search_term = ""
+if 'trip_details' not in st.session_state:
+    st.session_state.trip_details = {}
 
 def add_location(name, lat, lon, source=None, verified=False):
     st.session_state.locations_list.append(name)
@@ -68,10 +71,11 @@ with col1:
     1. Enter your name & email
     2. Select a report type
     3. Choose a location (or create new)
-    4. Click "Add Report" to add to order
-    5. Add multiple reports as needed
-    6. Click "Generate & Pay"
-    7. System processes & emails results
+    4. For Trip Report: Fill trip details
+    5. Click "Add Report" to add to order
+    6. Add multiple reports as needed
+    7. Click "Generate & Pay"
+    8. System processes & emails results
     """)
     
     st.write("### 👤 Your Details")
@@ -91,6 +95,49 @@ with col2:
     report_type = st.selectbox("Report Type", 
                                ["Surf Report", "Night Sky Report", "Weather Report", "Trip Report"],
                                key="report_type")
+    
+    # Trip Planner Form - Show only if Trip Report selected
+    if report_type == "Trip Report":
+        st.write("### 🚗 Trip Report Details")
+        st.info("Fill in your trip details below. These will be included in your generated report.")
+        
+        with st.form("trip_form", clear_on_submit=True):
+            vehicle_type = st.selectbox("Vehicle Type", ["Car", "SUV", "Van", "Truck", "Motorcycle"], key="vehicle_type")
+            fuel_type = st.selectbox("Fuel Type", ["Petrol", "Diesel", "Electric", "Hybrid"], key="fuel_type")
+            estimated_fuel_cost = st.number_input("Est. Fuel Cost ($)", min_value=0, value=50, step=5, key="fuel_cost")
+            activities = st.multiselect("Activities", ["Hiking", "Photography", "Sightseeing", "Camping", "Dining", "Surfing", "Beach"], key="activities")
+            accommodation = st.selectbox("Accommodation", ["Hotel", "Airbnb", "Camping", "Hostel", "Free Camping", "Caravan Parks"], key="accommodation")
+            trip_duration = st.slider("Trip Duration (days)", 1, 30, 3, key="trip_duration")
+            
+            submitted = st.form_submit_button("💾 Save Trip Details")
+            if submitted:
+                if not activities:
+                    st.error("Please select at least one activity")
+                else:
+                    st.session_state.trip_details = {
+                        'vehicle_type': vehicle_type,
+                        'fuel_type': fuel_type,
+                        'fuel_cost': estimated_fuel_cost,
+                        'activities': activities,
+                        'accommodation': accommodation,
+                        'trip_duration': trip_duration
+                    }
+                    st.success("✅ Trip details saved! Now select location and add report.")
+        
+        # Display saved trip details
+        if st.session_state.trip_details:
+            st.write("### 📝 Saved Trip Details")
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                st.metric("Vehicle", st.session_state.trip_details.get('vehicle_type', 'N/A'))
+                st.metric("Fuel Type", st.session_state.trip_details.get('fuel_type', 'N/A'))
+            with col_b:
+                st.metric("Duration", f"{st.session_state.trip_details.get('trip_duration', 0)} days")
+                st.metric("Fuel Cost", f"${st.session_state.trip_details.get('fuel_cost', 0)}")
+            with col_c:
+                st.metric("Accommodation", st.session_state.trip_details.get('accommodation', 'N/A'))
+            if st.session_state.trip_details.get('activities'):
+                st.write(f"**Activities:** {', '.join(st.session_state.trip_details['activities'])}")
     
     # Step 2: Select Location
     st.write("**Step 2: Select Location**")
@@ -138,11 +185,24 @@ with col2:
     
     # Step 4: Add Report Button
     st.write("**Step 3: Add Report**")
-    if st.button("➕ Add Report"):
-        st.session_state.selected_reports.append({
+    
+    # Validation for Trip Report
+    trip_ready = True
+    if report_type == "Trip Report":
+        if not st.session_state.trip_details:
+            st.warning("⚠️ Please save trip details first")
+            trip_ready = False
+    
+    if trip_ready and st.button("➕ Add Report"):
+        report_data = {
             'type': report_type,
             'location': selected_location
-        })
+        }
+        # Attach trip details if Trip Report
+        if report_type == "Trip Report" and st.session_state.trip_details:
+            report_data['details'] = st.session_state.trip_details.copy()
+        
+        st.session_state.selected_reports.append(report_data)
         st.success(f"✅ Added: {report_type} - {selected_location}")
         st.rerun()
     
@@ -150,7 +210,13 @@ with col2:
     st.write("### 📋 Your Reports")
     if st.session_state.selected_reports:
         for idx, report in enumerate(st.session_state.selected_reports, 1):
-            st.write(f"**Report {idx}:** {report['type']} | 📍 {report['location']}")
+            with st.expander(f"**Report {idx}:** {report['type']} | 📍 {report['location']}"):
+                if report['type'] == "Trip Report" and 'details' in report:
+                    st.write(f"🚗 Vehicle: {report['details'].get('vehicle_type')}")
+                    st.write(f"⛽ Fuel: {report['details'].get('fuel_type')}")
+                    st.write(f"📅 Duration: {report['details'].get('trip_duration')} days")
+                    st.write(f"🏨 Accommodation: {report['details'].get('accommodation')}")
+                    st.write(f"🎯 Activities: {', '.join(report['details'].get('activities', []))}")
         
         price_per_report = 5.00
         total_price = len(st.session_state.selected_reports) * price_per_report
@@ -176,7 +242,7 @@ with col2:
             "Surf Report":      "surf",
             "Night Sky Report": "sky",
             "Weather Report":   "weather",
-            "Trip Report":     "trip",
+            "Trip Report":      "trip",
         }
 
         # Step 1: Validate locations
@@ -200,8 +266,9 @@ with col2:
                 try:
                     coords = st.session_state.locations_coords[report['location']]
                     worker_type = type_map.get(report['type'], report['type'].lower())
+                    trip_details = report.get('details', None) if report['type'] == "Trip Report" else None
                     pdf_path = generate_report(
-                        report['location'], worker_type, coords, output_dir
+                        report['location'], worker_type, coords, output_dir, trip_details
                     )
                     pdf_paths.append(pdf_path)
                 except Exception as e:
@@ -228,6 +295,7 @@ with col2:
                 if success:
                     st.success(f"✅ All reports generated and sent to {st.session_state.user_email}!")
                     st.session_state.selected_reports = []
+                    st.session_state.trip_details = {}
                 else:
                     st.error(f"⚠️ Reports generated but email failed: {err_msg}")
                 st.session_state.progress_status = ""
@@ -249,10 +317,8 @@ with col3:
     st.write("Location: Melbourne | Temp: 22C | Wind: 15 km/h")
     st.divider()
 
-    st.write("**Trip Planner**")
+    st.write("**Trip Report**")
     st.write("Location: Sydney | Vehicle: Car | Duration: 3 days | Activities: Hiking, Sightseeing")
          
-    st.caption(f"© 2026 Sentinel Access | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-
-
+st.divider()
+st.caption(f"© 2026 Sentinel Access | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
