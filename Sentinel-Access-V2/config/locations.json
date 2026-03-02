@@ -214,5 +214,23 @@
   "Yallingup": [
     -33.6413,
     115.0243
-  ]
+  ],
+  "Birregurra": {
+    "latitude": -38.337786,
+    "longitude": 143.784335,
+    "source": "OpenStreetMap Nominatim",
+    "verified": true
+  },
+  "Nhulunbuy": {
+    "latitude": -12.180435,
+    "longitude": 136.775991,
+    "source": "OpenStreetMap Nominatim",
+    "verified": true
+  },
+  "birregurra": {
+    "latitude": -38.337786,
+    "longitude": 143.784335,
+    "source": "OpenStreetMap Nominatim",
+    "verified": true
+  }
 }
