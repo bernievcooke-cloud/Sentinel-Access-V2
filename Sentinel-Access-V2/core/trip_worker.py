@@ -9,6 +9,11 @@ from datetime import datetime
 import os
 import math
 
+try:
+    from core.location_manager import LocationManager as _LocationManager
+except ImportError:
+    _LocationManager = None
+
 def extract_coords(coords_data):
     """Extract lat/lon from various formats"""
     try:
@@ -94,6 +99,22 @@ def generate_report(location, report_type, coords, output_dir, trip_details=None
             start_lat, start_lon = extract_coords(start_coords_raw)
             end_lat, end_lon = extract_coords(end_coords_raw)
             
+            # Use LocationManager to resolve coordinates when missing
+            if _LocationManager is not None and (start_lat == 0 and start_lon == 0):
+                lm = _LocationManager()
+                coord_dict = lm.geocode_location(start_location)
+                start_lat = coord_dict.get('latitude', 0)
+                start_lon = coord_dict.get('longitude', 0)
+                if end_lat == 0 and end_lon == 0:
+                    coord_dict = lm.geocode_location(end_location)
+                    end_lat = coord_dict.get('latitude', 0)
+                    end_lon = coord_dict.get('longitude', 0)
+            elif _LocationManager is not None and (end_lat == 0 and end_lon == 0):
+                lm = _LocationManager()
+                coord_dict = lm.geocode_location(end_location)
+                end_lat = coord_dict.get('latitude', 0)
+                end_lon = coord_dict.get('longitude', 0)
+            
             print(f"DEBUG: start_lat={start_lat}, start_lon={start_lon}")
             print(f"DEBUG: end_lat={end_lat}, end_lon={end_lon}")
             
@@ -117,13 +138,13 @@ def generate_report(location, report_type, coords, output_dir, trip_details=None
             c.setFont("Helvetica", 11)
             trip_info = [
                 f"Start Location: {start_location}",
-                f"Start Coordinates: {start_lat:.4f}° N, {start_lon:.4f}° E",
+                f"Start Coordinates: {abs(start_lat):.4f}° S, {start_lon:.4f}° E",
                 f"",
                 f"End Location: {end_location}",
-                f"End Coordinates: {end_lat:.4f}° N, {end_lon:.4f}° E",
+                f"End Coordinates: {abs(end_lat):.4f}° S, {end_lon:.4f}° E",
                 f"",
                 f"Total Distance: {distance:.2f} km",
-                f"Estimated Travel Time: {distance / 100:.1f} hours (at 100 km/h avg)",
+                f"Estimated Travel Time: {distance / 80:.1f} hours (at 80 km/h avg)",
             ]
             
             for info in trip_info:

@@ -8,9 +8,29 @@ from reportlab.lib.pagesizes import letter
 from datetime import datetime
 import os
 
+try:
+    from core.location_manager import LocationManager as _LocationManager
+except ImportError:
+    _LocationManager = None
+
 def generate_report(location, report_type, coords, output_dir):
     """Generate Night Sky Report - returns PDF path"""
     try:
+        # Use LocationManager to extract proper coordinates
+        if _LocationManager is not None:
+            lm = _LocationManager()
+            if isinstance(coords, dict):
+                coord_dict = lm.get_location_coords(coords)
+            elif isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                lat, lon = float(coords[0]), float(coords[1])
+                coord_dict = {'latitude': lat, 'longitude': lon} if (lat != 0 and lon != 0) else lm.geocode_location(location)
+            else:
+                coord_dict = lm.geocode_location(location)
+            latitude = coord_dict.get('latitude', 0)
+            longitude = coord_dict.get('longitude', 0)
+        else:
+            latitude = float(coords[0]) if isinstance(coords, (list, tuple)) else 0
+            longitude = float(coords[1]) if isinstance(coords, (list, tuple)) else 0
         pdf_filename = f"sky_report_{location.replace(' ', '_')}.pdf"
         pdf_path = os.path.join(output_dir, pdf_filename)
         
@@ -26,7 +46,7 @@ def generate_report(location, report_type, coords, output_dir):
         c.drawString(50, height - 80, f"Location: {location}")
         
         c.setFont("Helvetica", 11)
-        c.drawString(50, height - 100, f"Coordinates: {coords[0]:.4f}, {coords[1]:.4f}")
+        c.drawString(50, height - 100, f"Coordinates: {abs(latitude):.4f}° S, {longitude:.4f}° E")
         
         # Divider
         c.line(50, height - 110, 500, height - 110)

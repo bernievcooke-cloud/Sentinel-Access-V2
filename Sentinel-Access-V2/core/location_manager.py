@@ -27,7 +27,7 @@ class LocationManager:
             mock_locations = {
                 'bondi beach': {'latitude': -33.8915, 'longitude': 151.2754},
                 'noosa heads': {'latitude': -26.3950, 'longitude': 153.0960},
-                'birregurra': {'latitude': -38.3333, 'longitude': 142.8333},
+                'birregurra': {'latitude': -38.3333, 'longitude': 143.7833},
                 'alice springs': {'latitude': -23.7001, 'longitude': 133.8807},
                 'nhulunbuy': {'latitude': -12.2381, 'longitude': 136.7757},
             }
