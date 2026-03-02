@@ -68,8 +68,8 @@ with col1:
     
     1. Enter your name & email
     2. Select a report type
-    3. Choose location(s)
-    4. Click "Add Report"
+    3. Click "Add Report"
+    4. Choose location(s)
     5. Add multiple reports as needed
     6. Click "Generate & Pay"
     7. System processes & emails results
@@ -108,6 +108,30 @@ with col2:
         selected_location = st.selectbox("Choose Location", 
                                         st.session_state.locations_list,
                                         key="location")
+    # Step 3: Add Report Button
+        st.write("**Step 3: Add Report**")
+    
+    if st.button("➕ Add Report"):
+        if report_type == "Trip Report":
+            if start_location == end_location:
+                st.error("⚠️ Start and End locations must be different")
+            else:
+                report_data = {
+                    'type': report_type,
+                    'start_location': start_location,
+                    'end_location': end_location
+                }
+                st.session_state.selected_reports.append(report_data)
+                st.success(f"✅ Added: Trip Report ({start_location} → {end_location})")
+                st.rerun()
+        else:
+            report_data = {
+                'type': report_type,
+                'location': selected_location
+            }
+            st.session_state.selected_reports.append(report_data)
+            st.success(f"✅ Added: {report_type} - {selected_location}")
+            st.rerun()
     
     # Create New Location if needed
     with st.expander("➕ Create New Location"):
@@ -146,31 +170,6 @@ with col2:
                 st.session_state.geocode_search_term = ""
                 st.success(f"✅ Added: {new_loc_name} ({result['latitude']}, {result['longitude']})")
                 st.rerun()
-    
-    # Step 3: Add Report Button
-    st.write("**Step 3: Add Report**")
-    
-    if st.button("➕ Add Report"):
-        if report_type == "Trip Report":
-            if start_location == end_location:
-                st.error("⚠️ Start and End locations must be different")
-            else:
-                report_data = {
-                    'type': report_type,
-                    'start_location': start_location,
-                    'end_location': end_location
-                }
-                st.session_state.selected_reports.append(report_data)
-                st.success(f"✅ Added: Trip Report ({start_location} → {end_location})")
-                st.rerun()
-        else:
-            report_data = {
-                'type': report_type,
-                'location': selected_location
-            }
-            st.session_state.selected_reports.append(report_data)
-            st.success(f"✅ Added: {report_type} - {selected_location}")
-            st.rerun()
     
     # Display Selected Reports
     st.write("### 📋 Your Reports")
@@ -309,4 +308,5 @@ with col3:
          
 st.divider()
 st.caption(f"© 2026 Sentinel Access | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
 
