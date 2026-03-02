@@ -407,4 +407,8 @@ if __name__ == "__main__":
         report_path = generate_report('Melbourne_to_Sydney', trip_details)
         print(f"✓ SUCCESS: Trip report generated as '{os.path.basename(report_path)}'")
     except Exception as e:
+<<<<<<< HEAD
         print(f"✗ ERROR: {e}")
+=======
+        print(f"✗ ERROR: {e}")
+>>>>>>> 9aec95fb3bdf4ed49caec1d7c7d69e1f974b2ea9
