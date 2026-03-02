@@ -28,14 +28,16 @@ def _load_locations_from_json():
     try:
         with open(json_path, 'r') as f:
             data = json.load(f)
-        for name, coord_data in data.items():
+        for key, coord_data in data.items():
             # Handle array format: [lat, lon]
             if isinstance(coord_data, (list, tuple)) and len(coord_data) >= 2:
-                coords_dict[name] = (float(coord_data[0]), float(coord_data[1]))
-            # Handle dict format: {latitude: ..., longitude: ...}
+                label = key
+                coords_dict[label] = (float(coord_data[0]), float(coord_data[1]))
+            # Handle dict format: {latitude: ..., longitude: ..., display_name: ...}
             elif isinstance(coord_data, dict):
                 if 'latitude' in coord_data and 'longitude' in coord_data:
-                    coords_dict[name] = (float(coord_data['latitude']), float(coord_data['longitude']))
+                    label = coord_data.get('display_name', key)
+                    coords_dict[label] = (float(coord_data['latitude']), float(coord_data['longitude']))
         return coords_dict if coords_dict else _FALLBACK_COORDS
     except Exception as e:
         print(f"⚠️ Could not load locations.json, using defaults: {e}")
@@ -61,11 +63,13 @@ if 'geocode_result' not in st.session_state:
 if 'geocode_search_term' not in st.session_state:
     st.session_state.geocode_search_term = ""
 
-def add_location(name, lat, lon, source=None, verified=False):
-    st.session_state.locations_list.append(name)
+def add_location(name, lat, lon, state=None, display_name=None, source=None, verified=False):
+    label = display_name or (f"{name}, {state}" if state else name)
+    st.session_state.locations_list.append(label)
     st.session_state.locations_list = sorted(list(set(st.session_state.locations_list)))
-    st.session_state.locations_coords[name] = (float(lat), float(lon))
-    location_manager.add_location(name, lat, lon, source=source, verified=verified)
+    st.session_state.locations_coords[label] = (float(lat), float(lon))
+    location_manager.add_location(name, lat, lon, state=state, display_name=label,
+                                   source=source, verified=verified)
 
 col1, col2, col3 = st.columns([1, 1.5, 1])
 
@@ -176,6 +180,8 @@ with col2:
                     new_loc_name,
                     float(lat),
                     float(lon),
+                    state=result.get('state'),
+                    display_name=result.get('display_name'),
                     source=result.get('source'),
                     verified=result.get('verified', False)
                 )
