@@ -44,16 +44,16 @@ def generate_report(location, report_type, coords, output_dir, trip_details=None
     """
     
     if report_type.lower() == "surf":
-    return surf_report(location, report_type, coords, output_dir)
-
+        return surf_report(location, report_type, coords, output_dir)
+    
     elif report_type.lower() in ("night", "sky"):
-    return sky_report(location, report_type, coords, output_dir)
-
+        return sky_report(location, report_type, coords, output_dir)
+    
     elif report_type.lower() == "weather":
-    return weather_report(location, coords, output_dir)  # ✓ Correct - NO report_type
-
+        return weather_report(location, coords, output_dir)
+    
     elif report_type.lower() == "trip":
-    return trip_report(location, trip_details, output_dir)
-
+        return trip_report(location, trip_details, output_dir)
+    
     else:
-    raise Exception(f"❌ Unknown Report Type: {report_type}")
+        raise Exception(f"❌ Unknown Report Type: {report_type}")
