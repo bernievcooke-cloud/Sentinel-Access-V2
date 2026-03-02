@@ -21,29 +21,31 @@ from config.settings import BASE_OUTPUT
 # ----------------------
 def get_moon_phase(d=None):
     """Calculates moon phase (0-30 days) and returns name and icon."""
-    if d is None: d = datetime.now()
-    # Conway's Moon Phase Algorithm
-    year, month, day = d.year, d.month, d.day
-    if month <= 2:
-        year -= 1
-        month += 12
-    a = year // 100
-    b = a // 4
-    c = 2 - a + b
-    e = int(365.25 * (year + 4716))
-    f = int(30.6001 * (month + 1))
-    jd = e + f + day + c - 1524.5
-    days_since_new = (jd - 2451549.5) % 29.53
+    if d is None:
+        d = datetime.now()
     
-    if days_since_new < 1.84: return "New Moon", "🌑"
-    elif days_since_new < 5.53: return "Waxing Crescent", "🌒"
-    elif days_since_new < 9.22: return "First Quarter", "🌓"
-    elif days_since_new < 12.91: return "Waxing Gibbous", "🌔"
-    elif days_since_new < 16.61: return "Full Moon", "🌕"
-    elif days_since_new < 20.30: return "Waning Gibbous", "🌖"
-    elif days_since_new < 23.99: return "Last Quarter", "🌗"
-    elif days_since_new < 27.68: return "Waning Crescent", "🌘"
-    else: return "New Moon", "🌑"
+    known_new_moon = datetime(2000, 1, 6)
+    days_since = (d - known_new_moon).days
+    phase = (days_since % 29.53) / 29.53
+    
+    if phase < 0.03 or phase > 0.97:
+        name, icon = "New Moon", "🌑"
+    elif 0.22 < phase < 0.28:
+        name, icon = "First Quarter", "🌓"
+    elif 0.47 < phase < 0.53:
+        name, icon = "Full Moon", "🌕"
+    elif 0.72 < phase < 0.78:
+        name, icon = "Last Quarter", "🌗"
+    elif phase < 0.25:
+        name, icon = "Waxing Crescent", "🌒"
+    elif phase < 0.5:
+        name, icon = "Waxing Gibbous", "🌔"
+    elif phase < 0.75:
+        name, icon = "Waning Gibbous", "🌖"
+    else:
+        name, icon = "Waning Crescent", "🌘"
+    
+    return name, icon
 
 def check_astro_window(row):
     cloud = row['cloud_cover']
@@ -65,36 +67,28 @@ def fetch_sky_data(lat, lon):
 # 2. PLOTTING
 # ----------------------
 def generate_sky_daily(df, loc_name):
-    now = datetime.now()
-    day_df = df[df["time"].dt.date == now.date()].copy()
-    fig, ax1 = plt.subplots(figsize=(11,5.5))
-
-    ax1.plot(day_df["time"], 100 - day_df["cloud_cover"], color="#4b0082", lw=3, label="Clarity %")
-    ax1.fill_between(day_df["time"], 100 - day_df["cloud_cover"], color="#4b0082", alpha=0.1)
-
-    for i, row in day_df.dropna(subset=['cloud_cover']).iterrows():
-        if check_astro_window(row):
-            ax1.scatter(row["time"], 100 - row["cloud_cover"], color="gold", marker="*", s=100, zorder=5)
-
-    ax1.axvline(now, color="red", lw=2, ls="--", label="Current Time")
-    ax1.set_ylim(0,110)
-    ax1.set_title(f"ASTRO STRATEGY: {loc_name.upper()}", fontweight="bold", fontsize=15)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    plt.tight_layout()
-
+    fig, ax = plt.subplots(figsize=(11, 6))
+    ax.bar(df['time'], df['cloud_cover'], color='skyblue', alpha=0.6, label='Cloud Cover')
+    ax.set_ylabel('Cloud Cover (%)', fontweight='bold')
+    ax.set_title(f"SKY CONDITIONS: {loc_name}", fontweight='bold', fontsize=14)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    ax.grid(True, alpha=0.3)
+    
     buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=140)
+    plt.savefig(buf, format='png', dpi=140, bbox_inches='tight')
     plt.close()
     buf.seek(0)
     return buf
 
-# ----------------------
-# 3. PDF BUILDER (V3.10 Optimized)
-# ----------------------
-def generate_report(location, coords, output_dir=BASE_OUTPUT):
+# ============================================================
+# 3. PDF BUILDER
+# ============================================================
+def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
+    """Generate night sky report"""
     lat, lon = coords
     df = fetch_sky_data(lat, lon)
-    if df is None: raise RuntimeError("Failed to fetch sky data.")
+    if df is None:
+        raise Exception("Failed to fetch sky data.")
 
     # Folder Handling
     loc_dir = os.path.join(output_dir, location)
@@ -115,6 +109,7 @@ def generate_report(location, coords, output_dir=BASE_OUTPUT):
         ['SKY STRATEGY', f"TARGET SITE: {location.upper()}"],
         ['MOON PHASE', f"{phase_icon} {phase_name.upper()}"]
     ]
+    
     t = Table(t_data, colWidths=[5*cm, 13.5*cm])
     t.setStyle(TableStyle([
         ('BACKGROUND',(0,0),(0,0),colors.black),
