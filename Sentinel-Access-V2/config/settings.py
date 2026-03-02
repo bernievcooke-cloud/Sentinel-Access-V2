@@ -10,19 +10,20 @@ BASE_OUTPUT = os.getenv("BASE_OUTPUT_PATH", r"C:\OneDrive\Sentinel-Access-v2\sto
 BASE_OUTPUT_PATH = os.getenv("BASE_OUTPUT_PATH", r"C:\OneDrive\Sentinel-Access-v2\storage\reports")
 
 # GitHub Configuration
-GITHUB_USERNAME = os.getenv("GITHUB_USERNAME", "")
-GITHUB_REPO = os.getenv("GITHUB_REPO", "")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+GITHUB_USERNAME=bernievcooke-cloud
+GITHUB_REPO=Sentinel-Access
+GITHUB_TOKEN=y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
 
 # Report Types
-REPORT_TYPES = os.getenv("REPORT_TYPES", "Surf, Sky, Weather").split(",")
+REPORT_TYPES = os.getenv("REPORT_TYPES", "Surf, Sky, Weather, Trip Planner").split(",")
 
 # Email Configuration
-SENDER_EMAIL = os.getenv("SENDER_EMAIL", "")
-SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "")
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+EMAIL_FROM=bernievcooke@gmail.com
+EMAIL_PASSWORD=kmoaifjbaufxnksf
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
 
 # Debug mode
 DEBUG = os.getenv("DEBUG", "True") == "True"
+
 
