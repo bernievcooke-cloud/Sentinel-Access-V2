@@ -64,7 +64,7 @@ if 'geocode_search_term' not in st.session_state:
 def add_location(name, lat, lon, source=None, verified=False):
     st.session_state.locations_list.append(name)
     st.session_state.locations_list = sorted(list(set(st.session_state.locations_list)))
-    st.session_state.locations_coords[name] = (lat, lon)
+    st.session_state.locations_coords[name] = (float(lat), float(lon))
     location_manager.add_location(name, lat, lon, source=source, verified=verified)
 
 col1, col2, col3 = st.columns([1, 1.5, 1])
@@ -164,21 +164,24 @@ with col2:
         if (st.session_state.geocode_result
                 and st.session_state.geocode_search_term == new_loc_name):
             result = st.session_state.geocode_result
-            st.success(f"📍 Found: {result['display_name']}")
-            st.write(f"**Coordinates:** {result['latitude']}, {result['longitude']}")
-            st.caption(f"Source: {result['source']}")
+            lat = result.get('latitude', 0)
+            lon = result.get('longitude', 0)
+            st.success(f"📍 Found: {result.get('display_name', 'Location')}")
+            st.write(f"**Coordinates:** {lat}, {lon}")
+            if result.get('source'):
+                st.caption(f"Source: {result['source']}")
 
             if st.button("✅ Confirm & Add Location"):
                 add_location(
                     new_loc_name,
-                    result['latitude'],
-                    result['longitude'],
-                    source=result['source'],
-                    verified=result['verified']
+                    float(lat),
+                    float(lon),
+                    source=result.get('source'),
+                    verified=result.get('verified', False)
                 )
                 st.session_state.geocode_result = None
                 st.session_state.geocode_search_term = ""
-                st.success(f"✅ Added: {new_loc_name} ({result['latitude']}, {result['longitude']})")
+                st.success(f"✅ Added: {new_loc_name} ({lat}, {lon})")
                 st.rerun()
     
     # Display Selected Reports
