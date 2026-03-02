@@ -1,39 +1,23 @@
-#!/usr/bin/env python3
-import os
+# report_wrapper.py
 
-# --- INTEGRATION WITH WORKERS ---
-try:
-    from core.surf_worker import generate_report as surf_report
-    from core.sky_worker import generate_report as sky_report
-    from core.weather_worker import generate_report as weather_report
-    from core.trip_worker import generate_report as trip_report
-except ImportError as e:
-    print(f"Import error: {e}")
-    def surf_report(*args, **kwargs):
-        raise Exception("Surf Worker not found")
-    def sky_report(*args, **kwargs):
-        raise Exception("Sky Worker not found")
-    def weather_report(*args, **kwargs):
-        raise Exception("Weather Worker not found")
-    def trip_report(*args, **kwargs):
-        raise Exception("Trip Worker not found")
+class ReportWrapper:
+    def __init__(self):
+        # Initialize report wrapper
+        pass
 
-def generate_report(location, report_type, coords, output_dir, trip_details=None):
-    """
-    Main report generator - routes to correct worker
-    """
+    def route_to_worker(self, report_type):
+        """Routes the report to the correct worker based on report type."""
+        if report_type == 'type_a':
+            return self.worker_type_a()
+        elif report_type == 'type_b':
+            return self.worker_type_b()
+        else:
+            raise ValueError('Unknown report type')
 
-    if report_type.lower() == "surf":
-        return surf_report(location, report_type, coords, output_dir)
+    def worker_type_a(self):
+        # Implementation for worker type A
+        return 'Processing with worker A'
 
-    elif report_type.lower() in ("night", "sky"):
-        return sky_report(location, report_type, coords, output_dir)
-
-    elif report_type.lower() == "weather":
-        return weather_report(location, report_type, coords, output_dir)
-
-    elif report_type.lower() == "trip":
-        return trip_report(location, report_type, coords, output_dir, trip_details)
-
-    else:
-        raise Exception(f"Unknown Report Type: {report_type}")
+    def worker_type_b(self):
+        # Implementation for worker type B
+        return 'Processing with worker B'
