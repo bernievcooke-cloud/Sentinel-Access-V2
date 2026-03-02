@@ -247,11 +247,12 @@ with col3:
     
     st.write("**Weather Report**")
     st.write("Location: Melbourne | Temp: 22C | Wind: 15 km/h")
-
-    st.write ("**Location Report**") 
-    st.write("Location: Bells Beach)
     st.divider()
+
+    st.write("**Trip Planner**")
+    st.write("Location: Sydney | Vehicle: Car | Duration: 3 days | Activities: Hiking, Sightseeing")
          
     st.caption(f"© 2026 Sentinel Access | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
 
 
