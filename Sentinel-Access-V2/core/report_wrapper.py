@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 
-# --- INTEGRATION WITH WORKERS ---
 try:
     from core.surf_worker import generate_report as surf_report
     from core.sky_worker import generate_report as sky_report
