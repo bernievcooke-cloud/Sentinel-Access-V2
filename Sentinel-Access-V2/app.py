@@ -24,10 +24,19 @@ _FALLBACK_COORDS = {
 
 def _load_locations_from_json():
     json_path = Path(__file__).parent / 'config' / 'locations.json'
+    coords_dict = {}
     try:
         with open(json_path, 'r') as f:
             data = json.load(f)
-        return {name: tuple(coords) for name, coords in data.items()}
+        for name, coord_data in data.items():
+            # Handle array format: [lat, lon]
+            if isinstance(coord_data, (list, tuple)) and len(coord_data) >= 2:
+                coords_dict[name] = (float(coord_data[0]), float(coord_data[1]))
+            # Handle dict format: {latitude: ..., longitude: ...}
+            elif isinstance(coord_data, dict):
+                if 'latitude' in coord_data and 'longitude' in coord_data:
+                    coords_dict[name] = (float(coord_data['latitude']), float(coord_data['longitude']))
+        return coords_dict if coords_dict else _FALLBACK_COORDS
     except Exception as e:
         print(f"⚠️ Could not load locations.json, using defaults: {e}")
         return _FALLBACK_COORDS
@@ -108,8 +117,9 @@ with col2:
         selected_location = st.selectbox("Choose Location", 
                                         st.session_state.locations_list,
                                         key="location")
+    
     # Step 3: Add Report Button
-        st.write("**Step 3: Add Report**")
+    st.write("**Step 3: Add Report**")
     
     if st.button("➕ Add Report"):
         if report_type == "Trip Report":
@@ -308,5 +318,3 @@ with col3:
          
 st.divider()
 st.caption(f"© 2026 Sentinel Access | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-
