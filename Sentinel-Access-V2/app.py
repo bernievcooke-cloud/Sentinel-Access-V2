@@ -63,6 +63,8 @@ if 'geocode_result' not in st.session_state:
 if 'geocode_search_term' not in st.session_state:
     st.session_state.geocode_search_term = ""
 
+_AU_STATES = ["", "NSW", "VIC", "QLD", "WA", "SA", "TAS", "NT", "ACT"]
+
 def add_location(name, lat, lon, state=None, display_name=None, source=None, verified=False):
     label = display_name or (f"{name}, {state}" if state else name)
     st.session_state.locations_list.append(label)
@@ -170,24 +172,35 @@ with col2:
             result = st.session_state.geocode_result
             lat = result.get('latitude', 0)
             lon = result.get('longitude', 0)
-            st.success(f"📍 Found: {result.get('display_name', 'Location')}")
+            st.success(f"📍 Found: {result.get('display_name', new_loc_name)}")
             st.write(f"**Coordinates:** {lat}, {lon}")
             if result.get('source'):
                 st.caption(f"Source: {result['source']}")
 
+            _default_state = result.get('state', '')
+            _default_idx = _AU_STATES.index(_default_state) if _default_state in _AU_STATES else 0
+            selected_state = st.selectbox("State", _AU_STATES, index=_default_idx, key="new_loc_state")
+
             if st.button("✅ Confirm & Add Location"):
+                final_state = selected_state or result.get('state')
+                # Use base of display_name (without state) or the user-entered name
+                _display_base = result.get('display_name', '')
+                if ', ' in _display_base:
+                    _display_base = _display_base.rsplit(', ', 1)[0]
+                _display_base = _display_base or new_loc_name
+                final_display = f"{_display_base}, {final_state}" if final_state else _display_base
                 add_location(
                     new_loc_name,
                     float(lat),
                     float(lon),
-                    state=result.get('state'),
-                    display_name=result.get('display_name'),
+                    state=final_state,
+                    display_name=final_display,
                     source=result.get('source'),
                     verified=result.get('verified', False)
                 )
                 st.session_state.geocode_result = None
                 st.session_state.geocode_search_term = ""
-                st.success(f"✅ Added: {new_loc_name} ({lat}, {lon})")
+                st.success(f"✅ Added: {final_display} ({lat}, {lon})")
                 st.rerun()
     
     # Display Selected Reports
