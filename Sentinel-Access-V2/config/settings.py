@@ -17,7 +17,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 REPORT_TYPES = os.getenv("REPORT_TYPES", "Surf, Sky, Weather, Trip Planner").split(",")
 
 # Email Configuration
-EMAIL_FROM = os.getenv("bernievcooke@gmail.com", "")
+EMAIL_FROM = os.getenv("EMAIL_FROM", "bernievcooke@gmail.com")
 EMAIL_PASSWORD = os.getenv("lmrnhkvyhoeujcnd", "")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
