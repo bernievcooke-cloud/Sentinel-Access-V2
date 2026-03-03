@@ -9,3 +9,6 @@ build/
 .env
 .venv
 venv/
+*.py[cod]
+*.pyo
+.env
