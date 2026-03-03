@@ -166,7 +166,7 @@ def generate_weekly(df, location_name):
     buf.seek(0)
     return buf
 
-def generate_report(location, coords, output_dir=BASE_OUTPUT):
+def generate_report(location, report_type, coords, output_dir):
     """Generate weather report with hourly and 7-day charts"""
     # Handle both tuple and dict coords formats
     if isinstance(coords, dict):

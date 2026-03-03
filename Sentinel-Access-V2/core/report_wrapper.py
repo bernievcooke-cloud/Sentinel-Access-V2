@@ -25,7 +25,7 @@ except ImportError as e:
         raise Exception("Weather Worker not found")
 
     def trip_report(*args, **kwargs):
-        raise Exception("Trip Worker not found")
+        raise Exception("Weather Worker not found")
 
 
 def generate_report(location, report_type, coords, output_dir, trip_details=None):
@@ -50,7 +50,7 @@ def generate_report(location, report_type, coords, output_dir, trip_details=None
         return sky_report(location, report_type, coords, output_dir)
 
     elif report_type.lower() == "weather":
-        return weather_report(location, coords, output_dir)
+        return weather_report(location, report_type, coords, output_dir)
 
     elif report_type.lower() == "trip":
         return trip_report(location, trip_details, output_dir)
