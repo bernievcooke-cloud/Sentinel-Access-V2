@@ -18,7 +18,7 @@ REPORT_TYPES = os.getenv("REPORT_TYPES", "Surf, Sky, Weather, Trip Planner").spl
 
 # Email Configuration
 EMAIL_FROM = os.getenv("EMAIL_FROM", "bernievcooke@gmail.com")
-EMAIL_PASSWORD = os.getenv("lmrnhkvyhoeujcnd", "")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
