@@ -53,7 +53,7 @@ def generate_report(location, report_type, coords, output_dir, trip_details=None
         return weather_report(location, report_type, coords, output_dir)
     
     elif report_type.lower() == "trip":
-        return trip_report(location, report_type, coords, output_dir, trip_details)
+        return trip_report(location, trip_details, output_dir)
     
     else:
         raise Exception(f"❌ Unknown Report Type: {report_type}")
