@@ -246,9 +246,11 @@ def generate_report(location, report_type, coords, output_dir):
 if __name__ == "__main__":
     LOCATION = "Melbourne"
     COORDS = (-37.8136, 144.9631)
+    REPORT_TYPE = "weather"
+    OUTPUT_DIR = BASE_OUTPUT
     
     try:
-        report_path = generate_report(LOCATION, COORDS)
+        report_path = generate_report(LOCATION, REPORT_TYPE, COORDS, OUTPUT_DIR)
         print(f"✓ SUCCESS: Weather report generated as '{os.path.basename(report_path)}'")
     except Exception as e:
         print(f"✗ ERROR: {e}")
