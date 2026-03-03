@@ -33,6 +33,9 @@ def _load_json_locations():
         return {}
 
 
+_AU_STATE_CODES = {"NSW", "VIC", "QLD", "WA", "SA", "TAS", "NT", "ACT"}
+
+
 class LocationManager:
     """Manage locations with optional Google Maps integration"""
 
@@ -44,6 +47,18 @@ class LocationManager:
     def geocode_location(self, location_name):
         """Convert location name to coordinates (case-insensitive, loads from JSON)."""
         try:
+            search = location_name.lower().strip()
+
+            # Search loaded JSON locations case-insensitively against key and display_name
+            for key, entry in self._locations.items():
+                display = entry.get('display_name', '')
+                # Also match display_name without state suffix (e.g. "Bells Beach" matches "Bells Beach, VIC")
+                display_base = display.rsplit(', ', 1)[0] if ', ' in display else display
+                if (key.lower() == search
+                        or display.lower() == search
+                        or display_base.lower() == search):
+                    return dict(entry)
+
             if self.has_maps:
                 # Use Google Maps API if available
                 import googlemaps
@@ -52,14 +67,18 @@ class LocationManager:
                 if geocode_result:
                     lat = geocode_result[0]['geometry']['location']['lat']
                     lon = geocode_result[0]['geometry']['location']['lng']
-                    return {'latitude': lat, 'longitude': lon}
-
-            search = location_name.lower().strip()
-
-            # Search loaded JSON locations case-insensitively against key and display_name
-            for key, entry in self._locations.items():
-                if key.lower() == search or entry.get('display_name', '').lower() == search:
-                    return dict(entry)
+                    state = None
+                    for component in geocode_result[0].get('address_components', []):
+                        if 'administrative_area_level_1' in component['types']:
+                            code = component['short_name']
+                            # Only accept valid Australian state abbreviations
+                            if code in _AU_STATE_CODES:
+                                state = code
+                            break
+                    result = {'latitude': lat, 'longitude': lon, 'source': 'Google Maps'}
+                    if state:
+                        result['state'] = state
+                    return result
 
             # Default fallback
             print(f"⚠️ Location '{location_name}' not found, using Sydney coordinates")
