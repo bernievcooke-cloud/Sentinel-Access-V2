@@ -1,133 +1,198 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import math
 import os
-import pandas as pd
+from datetime import datetime
+from io import BytesIO
+from typing import Any, Callable
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from datetime import datetime
-from io import BytesIO
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+import pandas as pd
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
 from reportlab.lib.units import cm
-import requests
+from reportlab.lib.styles import getSampleStyleSheet
 
-# Import global settings
-from config.settings import BASE_OUTPUT
+from core.location_manager import LocationManager
 
-# ----------------------
-# 1. ASTRO LOGIC
-# ----------------------
-def get_moon_phase(d=None):
-    """Calculates moon phase (0-30 days) and returns name and icon."""
-    if d is None:
-        d = datetime.now()
-    
-    known_new_moon = datetime(2000, 1, 6)
-    days_since = (d - known_new_moon).days
-    phase = (days_since % 29.53) / 29.53
-    
-    if phase < 0.03 or phase > 0.97:
-        name, icon = "New Moon", "🌑"
-    elif 0.22 < phase < 0.28:
-        name, icon = "First Quarter", "🌓"
-    elif 0.47 < phase < 0.53:
-        name, icon = "Full Moon", "🌕"
-    elif 0.72 < phase < 0.78:
-        name, icon = "Last Quarter", "🌗"
-    elif phase < 0.25:
-        name, icon = "Waxing Crescent", "🌒"
-    elif phase < 0.5:
-        name, icon = "Waxing Gibbous", "🌔"
-    elif phase < 0.75:
-        name, icon = "Waning Gibbous", "🌖"
-    else:
-        name, icon = "Waning Crescent", "🌘"
-    
-    return name, icon
 
-def check_astro_window(row):
-    cloud = row['cloud_cover']
-    if cloud <= 15: return "CLEAR SKY"
-    if cloud <= 30: return "PARTIAL"
-    return None
+LM = LocationManager()
 
-def fetch_sky_data(lat, lon):
-    try:
-        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=cloud_cover,visibility,relative_humidity_2m&timezone=auto"
-        df = pd.DataFrame(requests.get(url).json()['hourly'])
-        df['time'] = pd.to_datetime(df['time'])
-        return df
-    except Exception as e:
-        print(f"Sky data fetch error: {e}")
-        return None
 
-# ----------------------
-# 2. PLOTTING
-# ----------------------
-def generate_sky_daily(df, loc_name):
-    fig, ax = plt.subplots(figsize=(11, 6))
-    ax.bar(df['time'], df['cloud_cover'], color='skyblue', alpha=0.6, label='Cloud Cover')
-    ax.set_ylabel('Cloud Cover (%)', fontweight='bold')
-    ax.set_title(f"SKY CONDITIONS: {loc_name}", fontweight='bold', fontsize=14)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    ax.grid(True, alpha=0.3)
-    
+def _get_lat_lon_from_location(name: str) -> tuple[float, float]:
+    payload = LM.get(name)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Unknown location: {name}")
+
+    # support both schemas
+    lat = payload.get("latitude", payload.get("lat"))
+    lon = payload.get("longitude", payload.get("lon"))
+
+    if lat is None or lon is None:
+        raise ValueError(f"Location '{name}' is missing latitude/longitude in locations.json")
+
+    return float(lat), float(lon)
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    p = math.pi / 180.0
+    a = (
+        0.5
+        - math.cos((lat2 - lat1) * p) / 2.0
+        + math.cos(lat1 * p) * math.cos(lat2 * p) * (1 - math.cos((lon2 - lon1) * p)) / 2.0
+    )
+    return 12742.0 * math.asin(math.sqrt(a))
+
+
+def _litres(distance_km: float, fuel_l_per_100km: float) -> float:
+    return max(0.0, float(distance_km)) * (float(fuel_l_per_100km) / 100.0)
+
+
+def _make_charts(legs_rows: list[dict[str, Any]], fuel_type: str, price_per_l: float, fuel_l_per_100km: float) -> BytesIO:
+    df = pd.DataFrame(legs_rows)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+    names = df["name"].tolist()
+    dists = df["dist_km"].tolist()
+    costs = df["cost"].tolist()
+
+    bars1 = ax1.bar(names, dists)
+    ax1.set_title("Distance per Leg")
+    ax1.bar_label(bars1, padding=3, fmt="%.1f km", fontsize=9)
+    ax1.set_ylabel("km")
+    ax1.grid(True, axis="y", alpha=0.2)
+
+    bars2 = ax2.bar(names, costs)
+    ax2.set_title(f"Fuel Cost per Leg ({fuel_type} @ ${price_per_l:.3f}/L, {fuel_l_per_100km:.1f} L/100km)")
+    ax2.bar_label(bars2, padding=3, fmt="$%.2f", fontsize=9)
+    ax2.set_ylabel("$")
+    ax2.grid(True, axis="y", alpha=0.2)
+
+    plt.tight_layout()
     buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=140, bbox_inches='tight')
-    plt.close()
+    plt.savefig(buf, format="png", dpi=140, bbox_inches="tight")
+    plt.close(fig)
     buf.seek(0)
     return buf
 
-# ============================================================
-# 3. PDF BUILDER
-# ============================================================
-def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
-    """Generate night sky report"""
-    lat, lon = coords
-    df = fetch_sky_data(lat, lon)
-    if df is None:
-        raise Exception("Failed to fetch sky data.")
 
-    # Folder Handling
-    loc_dir = os.path.join(output_dir, location)
-    os.makedirs(loc_dir, exist_ok=True)
-    
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-    filename = f"Sky_Report_{location.replace(' ', '_')}_{timestamp}.pdf"
-    save_path = os.path.join(loc_dir, filename)
+def generate_report(
+    target: str,
+    data: Any,
+    output_dir: str,
+    logger: Callable[[str], None] = print,
+):
+    """
+    Standardized signature:
+      generate_report(target, data, output_dir, logger=...)
 
-    # Moon Phase Calculation
-    phase_name, phase_icon = get_moon_phase()
+    data dict expected:
+      {
+        "route": ["Start", "Stop1", "Stop2"],
+        "fuel_type": "Petrol"|"Diesel",
+        "fuel_l_per_100km": 9.5,
+        "fuel_price": 2.10
+      }
 
-    doc = SimpleDocTemplate(save_path, pagesize=A4, topMargin=0.5*cm, bottomMargin=0.5*cm)
-    styles = getSampleStyleSheet()
+    Returns PDF path or None.
+    """
+    try:
+        if not isinstance(data, dict):
+            raise ValueError("Trip worker expects data dict with 'route' etc.")
 
-    # Strategy Table
-    t_data = [
-        ['SKY STRATEGY', f"TARGET SITE: {location.upper()}"],
-        ['MOON PHASE', f"{phase_icon} {phase_name.upper()}"]
-    ]
-    
-    t = Table(t_data, colWidths=[5*cm, 13.5*cm])
-    t.setStyle(TableStyle([
-        ('BACKGROUND',(0,0),(0,0),colors.black),
-        ('TEXTCOLOR',(0,0),(0,0),colors.white),
-        ('BACKGROUND',(0,1),(0,1),colors.indigo),
-        ('TEXTCOLOR',(0,1),(0,1),colors.white),
-        ('ALIGN',(0,0),(-1,-1),'CENTER'),
-        ('FONTNAME',(0,0),(-1,-1),'Helvetica-Bold'),
-        ('GRID',(0,0),(-1,-1),0.5,colors.lightgrey)
-    ]))
+        route = data.get("route") or data.get("sequence") or data.get("locations")
+        if not isinstance(route, (list, tuple)) or len(route) < 2:
+            raise ValueError("Trip route must contain at least 2 locations.")
 
-    story = [
-        Paragraph(f"<b>NIGHT SKY SENTINEL REPORT</b>", styles["Title"]),
-        t, Spacer(1,15),
-        Image(generate_sky_daily(df, location), 19*cm, 10*cm),
-        Spacer(1,15),
-        Paragraph(f"<b>Astro Analysis:</b> Gold Stars indicate 70%+ Clarity (Optimal for Viewing).<br/>Coords: {coords} | Time: {datetime.now().strftime('%H:%M')}", styles["Normal"])
-    ]
-    doc.build(story)
-    
-    return save_path
+        fuel_type = str(data.get("fuel_type", "Petrol")).strip().title()
+        fuel_l_per_100km = float(data.get("fuel_l_per_100km", 9.5))
+        price_per_l = float(data.get("fuel_price", 2.10))
+
+        logger(f"Trip worker: target={target} route={route} fuel={fuel_type} {fuel_l_per_100km:.1f}L/100km @ ${price_per_l:.2f}/L")
+
+        legs_rows: list[dict[str, Any]] = []
+        total_km = total_l = total_cost = 0.0
+
+        for i in range(len(route) - 1):
+            s = str(route[i])
+            e = str(route[i + 1])
+
+            lat1, lon1 = _get_lat_lon_from_location(s)
+            lat2, lon2 = _get_lat_lon_from_location(e)
+
+            dist_km = _haversine_km(lat1, lon1, lat2, lon2)
+            litres = _litres(dist_km, fuel_l_per_100km)
+            cost = litres * price_per_l
+
+            total_km += dist_km
+            total_l += litres
+            total_cost += cost
+
+            legs_rows.append(
+                {
+                    "name": f"{s[:3]}->{e[:3]}",
+                    "start": s,
+                    "end": e,
+                    "dist_km": dist_km,
+                    "litres": litres,
+                    "cost": cost,
+                }
+            )
+
+        chart_buf = _make_charts(legs_rows, fuel_type, price_per_l, fuel_l_per_100km)
+
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"Trip_{target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        ppath = os.path.join(output_dir, filename)
+
+        styles = getSampleStyleSheet()
+        doc = SimpleDocTemplate(ppath, pagesize=A4, topMargin=0.8 * cm, bottomMargin=0.8 * cm)
+
+        story = [
+            Paragraph(f"<b>TRIP REPORT: {target}</b>", styles["Title"]),
+            Spacer(1, 0.3 * cm),
+            Paragraph(
+                f"<b>Fuel type:</b> {fuel_type} &nbsp;&nbsp; "
+                f"<b>Price:</b> ${price_per_l:.3f}/L &nbsp;&nbsp; "
+                f"<b>Consumption:</b> {fuel_l_per_100km:.1f} L/100km",
+                styles["Normal"],
+            ),
+            Spacer(1, 0.2 * cm),
+            Paragraph(
+                f"<b>Total distance:</b> {total_km:.1f} km &nbsp;&nbsp; "
+                f"<b>Total fuel:</b> {total_l:.1f} L &nbsp;&nbsp; "
+                f"<b>Total cost:</b> ${total_cost:.2f}",
+                styles["Normal"],
+            ),
+            Spacer(1, 0.35 * cm),
+            Paragraph("<b>Leg Breakdown</b>", styles["Heading2"]),
+        ]
+
+        for idx, leg in enumerate(legs_rows, start=1):
+            story.append(
+                Paragraph(
+                    f"{idx}. <b>{leg['start']} → {leg['end']}</b> "
+                    f"({leg['dist_km']:.1f} km) — {leg['litres']:.1f} L — ${leg['cost']:.2f}",
+                    styles["Normal"],
+                )
+            )
+
+        story.append(Spacer(1, 0.4 * cm))
+        story.append(Image(chart_buf, 18 * cm, 13.5 * cm))
+
+        doc.build(story)
+
+        if os.path.exists(ppath) and os.path.getsize(ppath) > 1000:
+            logger(f"SUCCESS: Trip PDF created at {ppath}")
+            return ppath
+
+        logger("ERROR: Trip PDF not written or too small.")
+        return None
+
+    except Exception as e:
+        logger(f"TRIP worker error: {e}")
+        return None
