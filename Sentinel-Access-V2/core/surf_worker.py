@@ -1,165 +1,491 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
+import io
 import os
-import requests
-import pandas as pd
+from datetime import datetime, timedelta
+from typing import Any, Callable, Optional
+
 import numpy as np
+import pandas as pd
+import requests
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from datetime import datetime, timedelta
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
 from reportlab.lib.units import cm
-from io import BytesIO
 
-# Import settings from config
-try:
-    from config.settings import BASE_OUTPUT
-except ImportError:
-    BASE_OUTPUT = r"C:\OneDrive\Public Reports A\OUTPUT"
 
-# ============================================================
-# 1. THE ENGINE (Strategy Integrity Maintained)
-# ============================================================
+# -------------------------------------------------
+# HELPERS
+# -------------------------------------------------
 def deg_to_compass(deg):
-    if deg is None or (isinstance(deg, float) and np.isnan(deg)): return "N/A"
-    dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", 
-            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    if deg is None or (isinstance(deg, float) and np.isnan(deg)):
+        return "N/A"
+    dirs = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+    ]
     idx = int((deg + 11.25) / 22.5) % 16
     return dirs[idx]
 
-def check_x_factor(row):
-    # Fetching values with 0.0 fallback to prevent NoneType crashes
-    w = row.get('wind_direction_10m', 0.0)
-    s = row.get('swell_wave_height', 0.0)
-    t = row.get('tide_height', 0.0)
-    
-    # Original Strategy Logic Integrity
-    if (25 <= w <= 85) and (0.8 <= s <= 2.5) and (t >= 1.4): return "Woolamai"
-    if (310 <= w <= 355) and (0.9 <= s <= 2.2) and (0.9 <= t <= 1.7): return "Smiths"
-    if (140 <= w <= 220) and (s >= 2.4) and (t >= 1.5): return "Cat Bay"
-    return None
 
-def fetch_surf_data(lat, lon):
+def _to_float(x: Any) -> Optional[float]:
     try:
-        m_url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&hourly=swell_wave_height,swell_wave_direction&timezone=auto"
-        w_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=wind_speed_10m,wind_direction_10m&timezone=auto"
-        
-        m_resp = requests.get(m_url).json()
-        w_resp = requests.get(w_url).json()
-        
-        df_m = pd.DataFrame(m_resp['hourly'])
-        df_w = pd.DataFrame(w_resp['hourly'])
-        
-        # Merge and Sanitize
-        df = pd.merge(df_m, df_w, on="time", how="inner")
-        
-        target_cols = ['swell_wave_height', 'swell_wave_direction', 'wind_speed_10m', 'wind_direction_10m']
-        for col in target_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-
-        df['time'] = pd.to_datetime(df['time'])
-        df['tide_height'] = 1.35 + 0.85 * np.sin(np.arange(len(df)) * (2 * np.pi / 12.4))
-        
-        return df
-    except Exception as e:
-        print(f"Data Fetch Error: {e}")
+        if x is None:
+            return None
+        return float(x)
+    except Exception:
         return None
 
-# ============================================================
-# 2. CHARTING ENGINE
-# ============================================================
-def generate_daily(df, location_name):
-    tomorrow = (datetime.now() + timedelta(days=1)).date()
-    day_df = df[df["time"].dt.date == tomorrow].copy()
-    
-    fig, ax1 = plt.subplots(figsize=(11, 5.5))
-    ax2, ax3 = ax1.twinx(), ax1.twinx()
-    ax3.spines.right.set_position(("axes", 1.08))
 
-    l1, = ax1.plot(day_df["time"], day_df["swell_wave_height"], color="#1f77b4", lw=3.5, label="Swell (m)")
-    l2, = ax2.plot(day_df["time"], day_df["wind_speed_10m"], color="#2ca02c", lw=1.5, ls="--", alpha=0.4, label="Wind (km/h)")
-    l3, = ax3.plot(day_df["time"], day_df["tide_height"], color="#17becf", lw=1.5, alpha=0.2, label="Tide (m)")
+def _extract_lat_lon(data: Any) -> tuple[Optional[float], Optional[float]]:
+    """
+    Accepts:
+      - list/tuple [lat, lon, ...]
+      - dict with lat/lon or latitude/longitude/lng keys
+      - nested dicts: coords/coordinates/location/geo/position
+    """
+    if data is None:
+        return None, None
 
-    for i, row in day_df.iloc[::3].iterrows():
-        compass = deg_to_compass(row['wind_direction_10m'])
-        ax1.text(row["time"], 0.94, compass, transform=ax1.get_xaxis_transform(), ha='center', fontsize=9, color='darkgreen', fontweight='bold')
+    if isinstance(data, (list, tuple)) and len(data) >= 2:
+        return _to_float(data[0]), _to_float(data[1])
 
-    day_df['active_x'] = day_df.apply(check_x_factor, axis=1)
-    x_only = day_df.dropna(subset=['active_x'])
-    
-    if not x_only.empty:
-        max_swell = x_only['swell_wave_height'].max()
-        for i, row in x_only.iterrows():
-            color_choice = "green" if row['swell_wave_height'] == max_swell else "blue"
-            ax1.scatter(row["time"], row["swell_wave_height"], color=color_choice, marker="x", s=80, zorder=10)
-            ax1.annotate(f"{row['active_x']}", xy=(row["time"], row["swell_wave_height"]), xytext=(0, -15), textcoords="offset points", color=color_choice, fontweight="bold", ha="center", size=8, bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', pad=1))
+    if not isinstance(data, dict):
+        return None, None
 
-    ax1.set_ylabel("Swell (m)", color="#1f77b4", fontweight='bold')
-    ax1.set_title(f"{location_name.upper()} STRATEGY FOR {tomorrow.strftime('%A %d %b').upper()}", fontweight="bold", fontsize=14)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    ax1.legend(handles=[l1, l2, l3], loc='upper left')
-    ax1.grid(True, alpha=0.15)
-    
-    buf = BytesIO(); plt.savefig(buf, format='png', dpi=140); plt.close(); buf.seek(0); return buf
+    candidates_lat = ["lat", "LAT", "latitude", "Latitude", "y", "Y"]
+    candidates_lon = ["lon", "LON", "lng", "LNG", "longitude", "Longitude", "x", "X"]
 
-def generate_weekly(df, location_name):
-    fig, ax1 = plt.subplots(figsize=(11, 5.5))
-    ax2, ax3 = ax1.twinx(), ax1.twinx()
-    ax3.spines.right.set_position(("axes", 1.10))
-    
-    l1, = ax1.plot(df['time'], df['swell_wave_height'], color="#1f77b4", lw=2.5, label="Swell (m)")
-    l2, = ax2.plot(df['time'], df['wind_speed_10m'], color="#2ca02c", lw=1, ls="--", alpha=0.4, label="Wind (km/h)")
-    l3, = ax3.plot(df['time'], df['tide_height'], color="#17becf", lw=0.8, alpha=0.2, label="Tide (m)")
+    lat = None
+    lon = None
 
-    for i, row in df.iloc[::12].iterrows():
-        compass = deg_to_compass(row['wind_direction_10m'])
-        ax1.text(row["time"], 0.94, compass, transform=ax1.get_xaxis_transform(), ha='center', fontsize=8, color='darkgreen')
+    for k in candidates_lat:
+        if k in data:
+            lat = _to_float(data.get(k))
+            if lat is not None:
+                break
 
-    ax1.set_title(f"7-DAY OUTLOOK: {location_name}", fontweight="bold", fontsize=14)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
-    ax1.grid(True, alpha=0.15)
-    
-    buf = BytesIO(); plt.savefig(buf, format='png', dpi=140); plt.close(); buf.seek(0); return buf
+    for k in candidates_lon:
+        if k in data:
+            lon = _to_float(data.get(k))
+            if lon is not None:
+                break
 
-# ============================================================
-# 3. PDF BUILDER
-# ============================================================
-def generate_report(location, report_type, coords, output_dir=BASE_OUTPUT):
-    lat, lon = coords
-    df = fetch_surf_data(lat, lon)
-    
-    if df is None:
-        raise Exception("API TIMEOUT: Data could not be retrieved.")
+    if lat is None or lon is None:
+        for nest_key in ["coords", "coord", "coordinates", "location", "geo", "position"]:
+            nested = data.get(nest_key)
+            if isinstance(nested, dict):
+                if lat is None:
+                    for k in candidates_lat:
+                        if k in nested:
+                            lat = _to_float(nested.get(k))
+                            if lat is not None:
+                                break
+                if lon is None:
+                    for k in candidates_lon:
+                        if k in nested:
+                            lon = _to_float(nested.get(k))
+                            if lon is not None:
+                                break
 
-    final_folder = os.path.join(output_dir, location)
-    if not os.path.exists(final_folder): os.makedirs(final_folder)
-    
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-    filename = f"Surf_Report_{location}_{timestamp}.pdf"
-    ppath = os.path.join(final_folder, filename)
-
-    doc = SimpleDocTemplate(ppath, pagesize=A4, topMargin=0.5*cm, bottomMargin=0.5*cm)
-    styles = getSampleStyleSheet()
-    
-    t = Table([['STRATEGY PREVIEW', f"LOCATION: {location.upper()}"]], colWidths=[5*cm, 13.5*cm])
-    t.setStyle(TableStyle([('BACKGROUND',(0,0),(0,0),colors.black),('TEXTCOLOR',(0,0),(0,0),colors.white),('ALIGN',(0,0),(-1,-1),'CENTER')]))
-
-    story = [
-        Paragraph(f"<b>SURF SENTINEL REPORT</b>", styles["Title"]),
-        t, Spacer(1, 10),
-        Image(generate_daily(df, location), 19*cm, 9*cm), Spacer(1, 10),
-        Image(generate_weekly(df, location), 19*cm, 9.5*cm),
-        Paragraph(f"<font size=8>Generated for Bernie | {datetime.now().strftime('%H:%M')}</font>", styles["Normal"])
-    ]
-    doc.build(story)
-    
-
-    return ppath
+    return lat, lon
 
 
+def _in_dir_range(deg: float, start: float, end: float) -> bool:
+    """
+    True if wind direction in [start, end] with wrap-around support (e.g. 300..60).
+    """
+    if deg is None or (isinstance(deg, float) and np.isnan(deg)):
+        return False
+    deg = float(deg) % 360
+    start = float(start) % 360
+    end = float(end) % 360
+    if start <= end:
+        return start <= deg <= end
+    return deg >= start or deg <= end  # wrap-around
 
+
+def _default_profile() -> dict:
+    """
+    Baseline surf profile so ANY new location can generate a report.
+    This is intentionally generic and conservative.
+    """
+    return {
+        "offshore_dir_ranges": [[290, 70]],  # W -> N -> E (wrap)
+        "max_wind_kmh": 28,
+        "swell_min": 0.9,
+        "swell_max": 3.8,
+        "tide_min": 1.1,
+    }
+
+
+def is_surf_window(row: pd.Series, target: str, profile: dict) -> Optional[str]:
+    """
+    Returns target name if conditions look like a surf window for THIS location,
+    based on the per-location profile.
+
+    IMPORTANT: It never returns other break names. It returns target or None.
+    """
+    wdir = row.get("wind_direction_10m")
+    ws = row.get("wind_speed_10m")
+    swell = row.get("swell_wave_height")
+    tide = row.get("tide_height")
+
+    if pd.isna(wdir) or pd.isna(ws) or pd.isna(swell) or pd.isna(tide):
+        return None
+
+    wdir = float(wdir)
+    ws = float(ws)
+    swell = float(swell)
+    tide = float(tide)
+
+    cfg = _default_profile()
+    if isinstance(profile, dict):
+        cfg.update(profile)
+
+    ranges = cfg.get("offshore_dir_ranges", [[290, 70]])
+    ranges = [(float(a), float(b)) for a, b in ranges]
+
+    max_wind = float(cfg.get("max_wind_kmh", 28))
+    swell_min = float(cfg.get("swell_min", 0.9))
+    swell_max = float(cfg.get("swell_max", 3.8))
+    tide_min = float(cfg.get("tide_min", 1.1))
+
+    ok_dir = any(_in_dir_range(wdir, a, b) for (a, b) in ranges)
+    ok_wind = ws <= max_wind
+    ok_swell = swell_min <= swell <= swell_max
+    ok_tide = tide >= tide_min
+
+    if ok_dir and ok_wind and ok_swell and ok_tide:
+        return target
+    return None
+
+
+def _safe_hourly_df(url: str, timeout: int = 15) -> pd.DataFrame:
+    r = requests.get(url, timeout=timeout)
+    r.raise_for_status()
+    j = r.json()
+    hourly = j.get("hourly")
+    if not hourly or "time" not in hourly:
+        return pd.DataFrame()
+    df = pd.DataFrame(hourly)
+    df["time"] = pd.to_datetime(df["time"]).dt.tz_localize(None)
+    return df
+
+
+def _build_surf_score(df: pd.DataFrame) -> pd.Series:
+    """
+    Score each day from the weekly dataset.
+    - +3 per hour where active_x triggers
+    - swell preference near 1.6m
+    - penalize strong winds > 25 km/h
+    """
+    dfx = df.copy()
+    dfx["date"] = dfx["time"].dt.date
+    dfx["score"] = 0.0
+
+    dfx.loc[dfx["active_x"].notna(), "score"] += 3.0
+
+    swell = dfx["swell_wave_height"].clip(lower=0)
+    dfx["score"] += 1.2 * (1.0 - (swell - 1.6).abs() / 2.5).clip(lower=0)
+
+    ws = dfx["wind_speed_10m"].fillna(0)
+    dfx["score"] -= 0.06 * (ws - 25).clip(lower=0)
+
+    return dfx.groupby("date")["score"].sum().sort_values(ascending=False)
+
+
+def _get_day_window(df: pd.DataFrame, day_date):
+    start = datetime.combine(day_date, datetime.min.time())
+    end = start + timedelta(days=1)
+    out = df[(df["time"] >= start) & (df["time"] < end)].copy()
+    if out.empty:
+        return df.iloc[:24].copy()
+    return out
+
+
+def _format_hour_axis(ax):
+    ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 3, 6, 9, 12, 15, 18, 21]))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    ax.tick_params(axis="x", rotation=0)
+
+
+def _shade_surf_windows(ax, dfx: pd.DataFrame):
+    good = dfx[dfx["active_x"].notna()].copy()
+    if good.empty:
+        return
+
+    good = good.sort_values("time")
+    times = good["time"].tolist()
+    block_start = times[0]
+    prev = times[0]
+
+    for t in times[1:]:
+        if (t - prev) > timedelta(hours=1.5):
+            ax.axvspan(block_start, prev + timedelta(hours=1), alpha=0.18)
+            block_start = t
+        prev = t
+
+    ax.axvspan(block_start, prev + timedelta(hours=1), alpha=0.18)
+
+
+def _annotate_wind_dirs(ax_wind, dfx: pd.DataFrame, step=3):
+    for _, row in dfx.iloc[::step].iterrows():
+        compass = deg_to_compass(row.get("wind_direction_10m"))
+        ws = row.get("wind_speed_10m", np.nan)
+        if pd.notna(ws):
+            ax_wind.annotate(
+                compass,
+                (row["time"], ws),
+                xytext=(0, 7),
+                textcoords="offset points",
+                ha="center",
+                fontsize=8,
+                fontweight="bold",
+            )
+
+
+def _plot_day_panel(ax, dfx: pd.DataFrame, title: str):
+    ax.set_title(title, fontweight="bold")
+
+    if dfx.empty:
+        ax.text(0.5, 0.5, "No data available for this day window.", ha="center", va="center", transform=ax.transAxes)
+        return
+
+    ax.plot(dfx["time"], dfx["swell_wave_height"], lw=2.4, label="Swell (m)")
+    ax.set_ylabel("Swell (m)")
+    ax.grid(True, alpha=0.2)
+    _format_hour_axis(ax)
+
+    ax_wind = ax.twinx()
+    ax_wind.plot(dfx["time"], dfx["wind_speed_10m"], lw=1.8, ls="--", label="Wind (km/h)")
+    ax_wind.set_ylabel("Wind (km/h)")
+
+    ax_tide = ax.twinx()
+    ax_tide.spines["right"].set_position(("axes", 1.12))
+    ax_tide.plot(dfx["time"], dfx["tide_height"], lw=1.4, ls=":", label="Tide (m)")
+    ax_tide.set_ylabel("Tide (m)")
+
+    _shade_surf_windows(ax, dfx)
+
+    good = dfx[dfx["active_x"].notna()]
+    if not good.empty:
+        ax.scatter(good["time"], good["swell_wave_height"], s=30, label="Surf window")
+
+        step = max(1, len(good) // 6)
+        for _, r in good.iloc[::step].iterrows():
+            ax.annotate(
+                str(r["active_x"]),
+                (r["time"], r["swell_wave_height"]),
+                textcoords="offset points",
+                xytext=(0, 8),
+                ha="center",
+                fontsize=8,
+            )
+
+    _annotate_wind_dirs(ax_wind, dfx, step=3)
+
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = ax_wind.get_legend_handles_labels()
+    h3, l3 = ax_tide.get_legend_handles_labels()
+    ax.legend(h1 + h2 + h3, l1 + l2 + l3, loc="upper left", fontsize=8)
+
+
+# -------------------------------------------------
+# MAIN WORKER
+# -------------------------------------------------
+def generate_report(
+    target: str | None = None,
+    data: Any = None,
+    output_dir: str | None = None,
+    logger: Callable[[str], None] = print,
+    *,
+    # app-compatible kwargs
+    location_name: str | None = None,
+    coords: Any = None,
+) -> str | None:
+    """
+    Backwards compatible + app compatible.
+
+    Legacy:
+      generate_report(target, data, output_dir, logger=...)
+
+      where data expected:
+        data[0] = lat
+        data[1] = lon
+        data[2] = optional surf_profile dict (from locations.json)
+
+    App-style:
+      generate_report(location_name="...", coords=[lat, lon], output_dir="...", logger=...)
+      generate_report(location_name="...", coords={"lat":..., "lon":...}, output_dir="...", logger=...)
+    """
+    try:
+        name = (location_name or target or "").strip() or "Location"
+
+        if not output_dir:
+            output_dir = str(os.path.join(os.getcwd(), "outputs"))
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Prefer coords kw for app-style, else legacy data
+        src = coords if coords is not None else data
+        lat, lon = _extract_lat_lon(src)
+        if lat is None or lon is None:
+            logger(f"CRITICAL: Surf worker could not parse lat/lon for target={name}")
+            return None
+
+        # surf_profile: legacy expects data[2] dict; allow coords payload to carry it too
+        profile = {}
+        if isinstance(data, (list, tuple)) and len(data) >= 3 and isinstance(data[2], dict):
+            profile = data[2]
+        elif isinstance(src, dict) and isinstance(src.get("surf_profile"), dict):
+            profile = src["surf_profile"]
+
+        logger(f"Surf worker: target={name} lat={float(lat)} lon={float(lon)}")
+        logger("Surf worker: using surf_profile from locations.json" if profile else "Surf worker: using default surf_profile")
+
+        marine_url = (
+            "https://marine-api.open-meteo.com/v1/marine"
+            f"?latitude={float(lat)}&longitude={float(lon)}"
+            "&hourly=swell_wave_height"
+            "&timezone=auto"
+        )
+
+        wind_url = (
+            "https://api.open-meteo.com/v1/forecast"
+            f"?latitude={float(lat)}&longitude={float(lon)}"
+            "&hourly=wind_speed_10m,wind_direction_10m"
+            "&timezone=auto"
+        )
+
+        logger("Surf worker: fetching marine hourly…")
+        df_m = _safe_hourly_df(marine_url)
+
+        logger("Surf worker: fetching wind hourly…")
+        df_w = _safe_hourly_df(wind_url)
+
+        if df_m.empty or df_w.empty:
+            logger("CRITICAL: Missing marine or wind data from API.")
+            return None
+
+        df = pd.merge(df_m, df_w, on="time", how="inner").sort_values("time").head(168).copy()
+        if df.empty:
+            logger("CRITICAL: merged dataframe empty.")
+            return None
+
+        # Synthetic tide (consistent, not real tide)
+        tide_cycle = 12.4
+        df["tide_height"] = 1.35 + 0.85 * np.sin(np.arange(len(df)) * (2 * np.pi / tide_cycle))
+
+        # ✅ profile-driven surf windows (returns ONLY name or None)
+        df["active_x"] = df.apply(lambda r: is_surf_window(r, name, profile), axis=1)
+
+        scores = _build_surf_score(df)
+        best_day = scores.index[0] if not scores.empty else None
+        best_break = name if best_day is not None else "None"
+
+        fig = plt.figure(figsize=(9.3, 12.1))
+        gs = fig.add_gridspec(3, 1, height_ratios=[1.25, 1.25, 1.1], hspace=0.35)
+
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax2 = fig.add_subplot(gs[1, 0])
+        ax3 = fig.add_subplot(gs[2, 0])
+
+        today_date = datetime.now().date()
+        today_df = _get_day_window(df, today_date)
+        _plot_day_panel(ax1, today_df, f"1) Today — {name} — Swell / Wind / Tide + Surf Windows")
+
+        if best_day is None:
+            ax2.set_title("2) Next Best Surf Day — No best day detected", fontweight="bold")
+            ax2.text(
+                0.5, 0.5, "No surf windows detected in the 7-day forecast window.",
+                ha="center", va="center", transform=ax2.transAxes
+            )
+        else:
+            best_df = _get_day_window(df, best_day)
+            _plot_day_panel(ax2, best_df, f"2) Next Best Surf Day: {best_day} ({name})")
+
+        ax3.set_title(f"3) 7-Day Trend — {name} — Swell & Wind + Surf Windows", fontweight="bold")
+        ax3.plot(df["time"], df["swell_wave_height"], lw=2.2, label="Swell (m)")
+        ax3.set_ylabel("Swell (m)")
+        ax3.grid(True, alpha=0.2)
+
+        ax3b = ax3.twinx()
+        ax3b.plot(df["time"], df["wind_speed_10m"], lw=1.6, ls="--", label="Wind (km/h)")
+        ax3b.set_ylabel("Wind (km/h)")
+
+        surf_pts = df[df["active_x"].notna()]
+        if not surf_pts.empty:
+            ax3.scatter(surf_pts["time"], surf_pts["swell_wave_height"], s=20, label="Surf window")
+
+        if best_day is not None:
+            start = datetime.combine(best_day, datetime.min.time())
+            end = start + timedelta(days=1)
+            ax3.axvspan(start, end, alpha=0.12, label="Best day")
+
+        ax3.xaxis.set_major_locator(mdates.DayLocator())
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
+        ax3.tick_params(axis="x", rotation=0)
+
+        h1, l1 = ax3.get_legend_handles_labels()
+        h2, l2 = ax3b.get_legend_handles_labels()
+        ax3.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=8)
+
+        img_buf = io.BytesIO()
+        fig.savefig(img_buf, format="png", dpi=150)
+        plt.close(fig)
+        img_buf.seek(0)
+
+        filename = f"Surf_{name}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        pdf_path = os.path.join(output_dir, filename)
+
+        styles = getSampleStyleSheet()
+        story = [Paragraph(f"SURF REPORT: {name}", styles["Title"]), Spacer(1, 6)]
+
+        if best_day is not None:
+            story.append(
+                Paragraph(
+                    f"<b>Next Best Day:</b> {best_day} &nbsp;&nbsp; <b>Location:</b> {best_break}",
+                    styles["Heading2"],
+                )
+            )
+        else:
+            story.append(Paragraph("<b>Next Best Day:</b> None detected in current forecast window.", styles["Heading2"]))
+
+        # profile summary
+        cfg = _default_profile()
+        if isinstance(profile, dict):
+            cfg.update(profile)
+        story.append(Spacer(1, 6))
+        story.append(
+            Paragraph(
+                f"<b>Surf profile:</b> offshore={cfg.get('offshore_dir_ranges')} "
+                f"max_wind={cfg.get('max_wind_kmh')}km/h "
+                f"swell={cfg.get('swell_min')}-{cfg.get('swell_max')}m "
+                f"tide_min={cfg.get('tide_min')}m",
+                styles["BodyText"],
+            )
+        )
+
+        story.append(Spacer(1, 10))
+        story.append(RLImage(img_buf, width=18.0 * cm, height=23.0 * cm))
+
+        doc = SimpleDocTemplate(pdf_path, pagesize=A4, topMargin=0.7 * cm, bottomMargin=0.7 * cm)
+        doc.build(story)
+
+        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 1000:
+            logger(f"SUCCESS: Report created at {pdf_path}")
+            return pdf_path
+
+        logger("ERROR: PDF not written or too small.")
+        return None
+
+    except Exception as e:
+        logger(f"CRITICAL SYSTEM ERROR: {e}")
+        return None
