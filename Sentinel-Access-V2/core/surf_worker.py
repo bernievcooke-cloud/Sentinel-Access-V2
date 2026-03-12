@@ -326,6 +326,10 @@ def generate_report(
       generate_report(location_name="...", coords=[lat, lon], output_dir="...", logger=...)
       generate_report(location_name="...", coords={"lat":..., "lon":...}, output_dir="...", logger=...)
     """
+    # protect against bad logger values
+    if not callable(logger):
+        logger = print
+
     try:
         name = (location_name or target or "").strip() or "Location"
 
@@ -383,7 +387,7 @@ def generate_report(
         tide_cycle = 12.4
         df["tide_height"] = 1.35 + 0.85 * np.sin(np.arange(len(df)) * (2 * np.pi / tide_cycle))
 
-        # ✅ profile-driven surf windows (returns ONLY name or None)
+        # profile-driven surf windows
         df["active_x"] = df.apply(lambda r: is_surf_window(r, name, profile), axis=1)
 
         scores = _build_surf_score(df)
@@ -458,7 +462,6 @@ def generate_report(
         else:
             story.append(Paragraph("<b>Next Best Day:</b> None detected in current forecast window.", styles["Heading2"]))
 
-        # profile summary
         cfg = _default_profile()
         if isinstance(profile, dict):
             cfg.update(profile)
