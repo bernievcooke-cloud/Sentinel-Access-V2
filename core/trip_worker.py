@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import math
+import os
+from datetime import datetime
+from io import BytesIO
+from typing import Any, Callable
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import pandas as pd
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib.styles import getSampleStyleSheet
+
+from core.location_manager import LocationManager
+
+
+LM = LocationManager()
+
+
+def _get_lat_lon_from_location(name: str) -> tuple[float, float]:
+    payload = LM.get(name)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Unknown location: {name}")
+
+    # support both schemas
+    lat = payload.get("latitude", payload.get("lat"))
+    lon = payload.get("longitude", payload.get("lon"))
+
+    if lat is None or lon is None:
+        raise ValueError(f"Location '{name}' is missing latitude/longitude in locations.json")
+
+    return float(lat), float(lon)
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    p = math.pi / 180.0
+    a = (
+        0.5
+        - math.cos((lat2 - lat1) * p) / 2.0
+        + math.cos(lat1 * p) * math.cos(lat2 * p) * (1 - math.cos((lon2 - lon1) * p)) / 2.0
+    )
+    return 12742.0 * math.asin(math.sqrt(a))
+
+
+def _litres(distance_km: float, fuel_l_per_100km: float) -> float:
+    return max(0.0, float(distance_km)) * (float(fuel_l_per_100km) / 100.0)
+
+
+def _make_charts(legs_rows: list[dict[str, Any]], fuel_type: str, price_per_l: float, fuel_l_per_100km: float) -> BytesIO:
+    df = pd.DataFrame(legs_rows)
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+    names = df["name"].tolist()
+    dists = df["dist_km"].tolist()
+    costs = df["cost"].tolist()
+
+    bars1 = ax1.bar(names, dists)
+    ax1.set_title("Distance per Leg")
+    ax1.bar_label(bars1, padding=3, fmt="%.1f km", fontsize=9)
+    ax1.set_ylabel("km")
+    ax1.grid(True, axis="y", alpha=0.2)
+
+    bars2 = ax2.bar(names, costs)
+    ax2.set_title(f"Fuel Cost per Leg ({fuel_type} @ ${price_per_l:.3f}/L, {fuel_l_per_100km:.1f} L/100km)")
+    ax2.bar_label(bars2, padding=3, fmt="$%.2f", fontsize=9)
+    ax2.set_ylabel("$")
+    ax2.grid(True, axis="y", alpha=0.2)
+
+    plt.tight_layout()
+    buf = BytesIO()
+    plt.savefig(buf, format="png", dpi=140, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def generate_report(
+    target: str,
+    data: Any,
+    output_dir: str,
+    logger: Callable[[str], None] = print,
+):
+    """
+    Standardized signature:
+      generate_report(target, data, output_dir, logger=...)
+
+    data dict expected:
+      {
+        "route": ["Start", "Stop1", "Stop2"],
+        "fuel_type": "Petrol"|"Diesel",
+        "fuel_l_per_100km": 9.5,
+        "fuel_price": 2.10
+      }
+
+    Returns PDF path or None.
+    """
+    try:
+        if not isinstance(data, dict):
+            raise ValueError("Trip worker expects data dict with 'route' etc.")
+
+        route = data.get("route") or data.get("sequence") or data.get("locations")
+        if not isinstance(route, (list, tuple)) or len(route) < 2:
+            raise ValueError("Trip route must contain at least 2 locations.")
+
+        fuel_type = str(data.get("fuel_type", "Petrol")).strip().title()
+        fuel_l_per_100km = float(data.get("fuel_l_per_100km", 9.5))
+        price_per_l = float(data.get("fuel_price", 2.10))
+
+        logger(f"Trip worker: target={target} route={route} fuel={fuel_type} {fuel_l_per_100km:.1f}L/100km @ ${price_per_l:.2f}/L")
+
+        legs_rows: list[dict[str, Any]] = []
+        total_km = total_l = total_cost = 0.0
+
+        for i in range(len(route) - 1):
+            s = str(route[i])
+            e = str(route[i + 1])
+
+            lat1, lon1 = _get_lat_lon_from_location(s)
+            lat2, lon2 = _get_lat_lon_from_location(e)
+
+            dist_km = _haversine_km(lat1, lon1, lat2, lon2)
+            litres = _litres(dist_km, fuel_l_per_100km)
+            cost = litres * price_per_l
+
+            total_km += dist_km
+            total_l += litres
+            total_cost += cost
+
+            legs_rows.append(
+                {
+                    "name": f"{s[:3]}->{e[:3]}",
+                    "start": s,
+                    "end": e,
+                    "dist_km": dist_km,
+                    "litres": litres,
+                    "cost": cost,
+                }
+            )
+
+        chart_buf = _make_charts(legs_rows, fuel_type, price_per_l, fuel_l_per_100km)
+
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"Trip_{target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        ppath = os.path.join(output_dir, filename)
+
+        styles = getSampleStyleSheet()
+        doc = SimpleDocTemplate(ppath, pagesize=A4, topMargin=0.8 * cm, bottomMargin=0.8 * cm)
+
+        story = [
+            Paragraph(f"<b>TRIP REPORT: {target}</b>", styles["Title"]),
+            Spacer(1, 0.3 * cm),
+            Paragraph(
+                f"<b>Fuel type:</b> {fuel_type} &nbsp;&nbsp; "
+                f"<b>Price:</b> ${price_per_l:.3f}/L &nbsp;&nbsp; "
+                f"<b>Consumption:</b> {fuel_l_per_100km:.1f} L/100km",
+                styles["Normal"],
+            ),
+            Spacer(1, 0.2 * cm),
+            Paragraph(
+                f"<b>Total distance:</b> {total_km:.1f} km &nbsp;&nbsp; "
+                f"<b>Total fuel:</b> {total_l:.1f} L &nbsp;&nbsp; "
+                f"<b>Total cost:</b> ${total_cost:.2f}",
+                styles["Normal"],
+            ),
+            Spacer(1, 0.35 * cm),
+            Paragraph("<b>Leg Breakdown</b>", styles["Heading2"]),
+        ]
+
+        for idx, leg in enumerate(legs_rows, start=1):
+            story.append(
+                Paragraph(
+                    f"{idx}. <b>{leg['start']} → {leg['end']}</b> "
+                    f"({leg['dist_km']:.1f} km) — {leg['litres']:.1f} L — ${leg['cost']:.2f}",
+                    styles["Normal"],
+                )
+            )
+
+        story.append(Spacer(1, 0.4 * cm))
+        story.append(Image(chart_buf, 18 * cm, 13.5 * cm))
+
+        doc.build(story)
+
+        if os.path.exists(ppath) and os.path.getsize(ppath) > 1000:
+            logger(f"SUCCESS: Trip PDF created at {ppath}")
+            return ppath
+
+        logger("ERROR: Trip PDF not written or too small.")
+        return None
+
+    except Exception as e:
+        logger(f"TRIP worker error: {e}")
+        return None
