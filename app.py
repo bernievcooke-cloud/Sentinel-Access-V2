@@ -625,7 +625,7 @@ left, middle, right = st.columns([0.30, 0.44, 0.26], gap="large")
 
 # LEFT
 with left:
-    with st.container(border=True):
+    with st.container():
         st.subheader("Instructions")
         st.markdown(
             """
@@ -640,11 +640,16 @@ with left:
         st.subheader("User details")
         st.text_input("Name", key="user_name", disabled=st.session_state.is_running)
         st.text_input("Email", key="user_email", disabled=st.session_state.is_running)
-        st.button("Reset / Refresh page", use_container_width=True, on_click=reset_app_state, disabled=st.session_state.is_running)
+        st.button(
+            "Reset / Refresh page",
+            use_container_width=True,
+            on_click=reset_app_state,
+            disabled=st.session_state.is_running,
+        )
 
 # MIDDLE
 with middle:
-    with st.container(border=True):
+    with st.container():
         st.subheader("Report setup")
 
         # --------- CLEAR, DEFINITIVE STATUS BOX ----------
@@ -670,11 +675,21 @@ with middle:
             key="report_types",
             disabled=st.session_state.is_running,
         )
-        st.selectbox("Location", st.session_state.location_names, key="main_location", disabled=st.session_state.is_running)
+        st.selectbox(
+            "Location",
+            st.session_state.location_names,
+            key="main_location",
+            disabled=st.session_state.is_running,
+        )
 
         with st.expander("➕ Add a new location (standalone)", expanded=False):
             st.text_input("New location name", key="new_loc_name", disabled=st.session_state.is_running)
-            st.selectbox("State", ["VIC", "NSW", "QLD", "SA", "WA", "TAS", "NT", "ACT"], key="new_state", disabled=st.session_state.is_running)
+            st.selectbox(
+                "State",
+                ["VIC", "NSW", "QLD", "SA", "WA", "TAS", "NT", "ACT"],
+                key="new_state",
+                disabled=st.session_state.is_running,
+            )
 
             cols = st.columns([1, 1], gap="small")
             with cols[0]:
@@ -717,18 +732,44 @@ with middle:
             st.selectbox("Next location (2)", st.session_state.location_names, key="trip_stop2", disabled=st.session_state.is_running)
 
             st.selectbox("Fuel type", ["Petrol", "Diesel"], key="fuel_type", disabled=st.session_state.is_running)
-            st.number_input("Fuel consumption (L/100km)", min_value=1.0, value=9.5, step=0.1, key="fuel_l_per_100km", disabled=st.session_state.is_running)
+            st.number_input(
+                "Fuel consumption (L/100km)",
+                min_value=1.0,
+                value=9.5,
+                step=0.1,
+                key="fuel_l_per_100km",
+                disabled=st.session_state.is_running,
+            )
             default_price = 2.10 if (st.session_state.get("fuel_type") or "Petrol") == "Petrol" else 2.20
-            st.number_input("Fuel price ($/L)", min_value=0.0, value=float(default_price), step=0.01, key="fuel_price", disabled=st.session_state.is_running)
+            st.number_input(
+                "Fuel price ($/L)",
+                min_value=0.0,
+                value=float(default_price),
+                step=0.01,
+                key="fuel_price",
+                disabled=st.session_state.is_running,
+            )
 
         st.divider()
-        st.button("✅ Confirm selections", type="primary", use_container_width=True, on_click=confirm_action, disabled=st.session_state.is_running)
+        st.button(
+            "✅ Confirm selections",
+            type="primary",
+            use_container_width=True,
+            on_click=confirm_action,
+            disabled=st.session_state.is_running,
+        )
         render_progress_box(height=320)
-        st.button("💳 Generate & Pay", type="primary", use_container_width=True, on_click=generate_pay_action, disabled=st.session_state.is_running)
+        st.button(
+            "💳 Generate & Pay",
+            type="primary",
+            use_container_width=True,
+            on_click=generate_pay_action,
+            disabled=st.session_state.is_running,
+        )
 
 # RIGHT
 with right:
-    with st.container(border=True):
+    with st.container():
         st.subheader("Examples")
         tab_surf, tab_sky, tab_weather, tab_trip = st.tabs(["Surf", "Sky", "Weather", "Trip"])
 
