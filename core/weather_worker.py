@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from io import BytesIO
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Callable
 
 import requests
@@ -97,7 +98,7 @@ def _format_hour_axis(ax):
 
 
 def generate_daily(h_df, location_name):
-    now_dt = datetime.now()
+    now_dt = datetime.now(ZoneInfo("Australia/Melbourne")).replace(tzinfo=None)
     day_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
 
@@ -218,7 +219,7 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
         final_folder = os.path.join(output_dir, target)
         os.makedirs(final_folder, exist_ok=True)
 
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        timestamp = datetime.now(ZoneInfo("Australia/Melbourne")).strftime("%Y-%m-%d_%H%M%S")
         ppath = os.path.join(final_folder, f"Weather_Report_{target}_{timestamp}.pdf")
 
         daily_img = generate_daily(h_df, target)
@@ -234,7 +235,7 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
             Spacer(1, 10),
             Image(weekly_img, 19 * cm, 9.2 * cm),
             Spacer(1, 6),
-            Paragraph(f"<font size=8>Generated | {datetime.now().strftime('%Y-%m-%d %H:%M')}</font>", styles["Normal"]),
+            Paragraph(f"<font size=8>Generated | {datetime.now(ZoneInfo('Australia/Melbourne')).strftime('%Y-%m-%d %H:%M')}</font>", styles["Normal"]),
         ]
 
         doc.build(story)
