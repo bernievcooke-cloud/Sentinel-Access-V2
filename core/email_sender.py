@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # --- ENV FILE ---
 # Local fixed path first, then project-relative path, then default environment
-FIXED_ENV_FILE_PATH = Path(r"C:\OneDrive\Sentinel-Access-V2\Sentinel-Access-V2\.env")
+FIXED_ENV_FILE_PATH = Path(r"C:\OneDrive\Sentinel-Access-V2\Sentinel-Access-V2\config\".env")
 PROJECT_ENV_FILE_PATH = Path(__file__).resolve().parents[1] / ".env"
 
 if FIXED_ENV_FILE_PATH.exists():
