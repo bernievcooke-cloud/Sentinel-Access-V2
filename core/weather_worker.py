@@ -138,7 +138,7 @@ def generate_daily(h_df, location_name):
     _format_hour_axis(ax_temp)
     ax_temp.grid(True, alpha=0.18)
 
-    ax_temp.legend([l1a, l1f, l2a, l2f, l2g, l3],
+    ax_temp.legend([l1f, l1f, l2f, l2g, l2g, l3],
                    ["Actual Temp", "Forecast Temp", "Actual Wind", "Forecast Wind", "Wind Gusts", "Rain"],
                    loc="upper left", fontsize=8)
 
@@ -184,7 +184,7 @@ def generate_weekly(d_df, location_name):
     ax_temp.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
     ax_temp.grid(True, alpha=0.18)
 
-    ax_temp.legend([l1, l2, l2g, l3], ["Max Temp", "Max Wind", "Max Gusts", "Rain"], loc="upper left", fontsize=8)
+    ax_temp.legend([l2, l1, l2g, l3], ["Max Temp", "Max Wind", "Max Gusts", "Rain"], loc="upper left", fontsize=8)
 
     buf = BytesIO()
     plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
