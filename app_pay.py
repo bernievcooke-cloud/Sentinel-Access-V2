@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import inspect
-import json
 import os
-import re
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -12,8 +10,11 @@ from typing import Any, Optional
 import pandas as pd
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None  # type: ignore
 
 try:
     import stripe
@@ -22,26 +23,121 @@ except Exception:
 
 
 # ============================================================
-# LOAD ENV
+# ENV / STRIPE CONFIG
 # ============================================================
-ENV_FILE_PATH = Path(__file__).resolve().parent / "config" / ".env"
-if ENV_FILE_PATH.exists():
-    load_dotenv(dotenv_path=ENV_FILE_PATH)
-else:
-    load_dotenv()
+if load_dotenv is not None:
+    try:
+        load_dotenv()
+    except Exception:
+        pass
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
-APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8501").strip()
+APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip()  # e.g. https://sentinel-access-v2-akpcfse5vqn8ufwkmvigwq.streamlit.app
+CURRENCY = os.getenv("CURRENCY", "aud").strip().lower() or "aud"
 
-# Stripe config
-CURRENCY = "aud"
-PRICE_PER_REPORT_CENTS = 250
-BUNDLE_PRICE_CENTS = 800  # all four reports
+PRICE_PER_REPORT_CENTS = int(os.getenv("PRICE_PER_REPORT_CENTS", "1500"))
+BUNDLE_PRICE_CENTS = int(os.getenv("BUNDLE_PRICE_CENTS", "5000"))
 
-# local persistence for checkout context
-PROJECT_ROOT = Path(__file__).resolve().parent
-PAY_STATE_DIR = PROJECT_ROOT / "outputs" / "pay_state"
-PAY_STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+def looks_like_email(x: str) -> bool:
+    x = (x or "").strip()
+    return ("@" in x) and ("." in x.split("@")[-1])
+
+
+def cents_to_str(cents: int) -> str:
+    return f"${cents / 100:,.2f}"
+
+
+def stripe_ready() -> tuple[bool, str]:
+    if stripe is None:
+        return False, "Stripe package failed to import."
+    if not STRIPE_SECRET_KEY:
+        return False, "Missing STRIPE_SECRET_KEY."
+    if not APP_BASE_URL:
+        return False, "Missing APP_BASE_URL."
+    return True, "OK"
+
+
+def create_checkout_session(
+    user_email: str,
+    user_name: str,
+    reports: list[str],
+    location: str,
+    amount_cents: int,
+    label: str,
+) -> tuple[str, str]:
+    ok, why = stripe_ready()
+    if not ok:
+        raise RuntimeError(why)
+
+    assert stripe is not None
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    success_url = f"{APP_BASE_URL}/?paid=1&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{APP_BASE_URL}/?cancelled=1"
+
+    if len(reports) == 4:
+        line_items = [
+            {
+                "price_data": {
+                    "currency": CURRENCY,
+                    "product_data": {"name": "Sentinel Access — Bundle (4 reports)"},
+                    "unit_amount": BUNDLE_PRICE_CENTS,
+                },
+                "quantity": 1,
+            }
+        ]
+    else:
+        line_items = []
+        for rt in reports:
+            line_items.append(
+                {
+                    "price_data": {
+                        "currency": CURRENCY,
+                        "product_data": {"name": f"Sentinel Access — {rt} report"},
+                        "unit_amount": PRICE_PER_REPORT_CENTS,
+                    },
+                    "quantity": 1,
+                }
+            )
+
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        payment_method_types=["card"],
+        customer_email=user_email or None,
+        line_items=line_items,
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            "user_name": user_name or "",
+            "user_email": user_email or "",
+            "reports": ",".join(reports or []),
+            "location": location or "",
+            "pricing_label": label,
+            "expected_amount_cents": str(amount_cents),
+        },
+    )
+    return str(session.id), str(session.url)
+
+
+def verify_session_paid(session_id: str) -> tuple[bool, str]:
+    ok, why = stripe_ready()
+    if not ok:
+        return False, why
+
+    assert stripe is not None
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    try:
+        sess = stripe.checkout.Session.retrieve(session_id)
+        status = getattr(sess, "payment_status", None)
+        amount_total = getattr(sess, "amount_total", None)
+        if status == "paid":
+            amount_str = cents_to_str(int(amount_total)) if amount_total is not None else "paid"
+            return True, f"Payment confirmed: {amount_str}"
+        return False, f"Payment not confirmed yet (status={status})"
+    except Exception as e:
+        return False, f"Stripe verify error: {e}"
 
 
 # ============================================================
@@ -79,194 +175,82 @@ except Exception:
 
 
 # ============================================================
-# PAGE + STYLE
+# STYLE
 # ============================================================
-st.set_page_config(page_title="Sentinel Access (Payments)", layout="wide")
-
+st.set_page_config(page_title="Sentinel Access", layout="wide")
 st.markdown(
     """
     <style>
-      .block-container {
-        padding-top: 0.18rem;
-        padding-bottom: 0.30rem;
-        max-width: 1380px;
-      }
-
-      h1, h2, h3 {
-        margin-top: 0.03rem !important;
-        margin-bottom: 0.16rem !important;
-        line-height: 1.06 !important;
-      }
-
-      p, div, label {
-        line-height: 1.12 !important;
-      }
-
-      div[data-testid="stTextInput"],
-      div[data-testid="stSelectbox"],
-      div[data-testid="stNumberInput"],
-      div[data-testid="stTextArea"],
-      div[data-testid="stCheckbox"] {
-        margin-bottom: 0.07rem !important;
-      }
-
-      div[data-testid="stExpander"] {
-        margin-top: 0.08rem !important;
-        margin-bottom: 0.08rem !important;
-      }
-
-      div[data-testid="stButton"] {
-        margin-top: 0.03rem !important;
-        margin-bottom: 0.03rem !important;
-      }
+      .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 1500px; }
+      h1 { margin: 0.2rem 0 0.7rem 0 !important; }
 
       button[data-testid="stBaseButton-primary"] {
         background-color: #1f8f3a !important;
         border-color: #1f8f3a !important;
         color: white !important;
-        font-weight: 700 !important;
-        min-height: 2.20rem !important;
+        font-weight: 600 !important;
       }
-
       button[data-testid="stBaseButton-primary"]:hover {
         background-color: #17702d !important;
         border-color: #17702d !important;
-      }
-
-      textarea {
-        line-height: 1.18 !important;
-      }
-
-      div[data-testid="stTextArea"] textarea,
-      div[data-testid="stTextArea"] textarea:disabled {
-        color: #111827 !important;
-        -webkit-text-fill-color: #111827 !important;
-        opacity: 1 !important;
-        background-color: #f8fafc !important;
-        font-weight: 500 !important;
-      }
-
-      div[data-testid="stTextArea"] label p {
-        color: #111827 !important;
-        font-weight: 700 !important;
-      }
-
-      div[data-testid="stInfo"],
-      div[data-testid="stSuccess"],
-      div[data-testid="stError"],
-      div[data-testid="stWarning"] {
-        padding-top: 0.42rem !important;
-        padding-bottom: 0.42rem !important;
-        margin-bottom: 0.12rem !important;
-      }
-
-      .sa-header {
-        font-size: 1.22rem;
-        font-weight: 700;
-        margin: 0.00rem 0 0.16rem 0;
-        color: #111827;
-      }
-
-      .sa-step-card {
-        background: #f8fafc;
-        border: 1px solid #dbe4ee;
-        border-radius: 10px;
-        padding: 0.55rem 0.72rem;
-        margin: 0.14rem 0 0.18rem 0;
-      }
-
-      .sa-step-title {
-        font-size: 0.95rem;
-        font-weight: 700;
-        color: #0f172a;
-        margin-bottom: 0.14rem;
-      }
-
-      .sa-step-line {
-        font-size: 0.89rem;
-        color: #334155;
-        margin-bottom: 0.05rem;
-      }
-
-      .sa-anchor {
-        display: block;
-        position: relative;
-        top: -12px;
-        visibility: hidden;
       }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.markdown('<div class="sa-header">Sentinel Access — Pay &amp; Run</div>', unsafe_allow_html=True)
+st.title("Sentinel Access")
 
 
 # ============================================================
 # SESSION STATE DEFAULTS
 # ============================================================
-defaults = {
-    "progress_log": [],
-    "outputs": {},
-    "confirmed_ok": False,
-    "confirmed_payload": None,
-    "new_location_candidates": [],
-    "chosen_geo_label": None,
-    "location_names": [],
-    "is_running": False,
-    "final_banner": None,
-    "paid_ok": False,
-    "paid_summary": None,
-    "checkout_session_id": None,
-    "checkout_url": None,
-    "expected_amount_cents": None,
-    "auto_redirect_url": None,
-    "report_types": [],
-    "post_pay_focus": False,
-    "report_surf": False,
-    "report_sky": False,
-    "report_weather": False,
-    "report_trip": False,
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+if "progress_log" not in st.session_state:
+    st.session_state.progress_log = []
+if "confirmed_ok" not in st.session_state:
+    st.session_state.confirmed_ok = False
+if "confirmed_payload" not in st.session_state:
+    st.session_state.confirmed_payload = None
+if "outputs" not in st.session_state:
+    st.session_state.outputs = {}
+if "new_location_candidates" not in st.session_state:
+    st.session_state.new_location_candidates = []
+if "chosen_geo_label" not in st.session_state:
+    st.session_state.chosen_geo_label = None
+if "location_names" not in st.session_state:
+    st.session_state.location_names = []
+
+if "is_running" not in st.session_state:
+    st.session_state.is_running = False
+if "final_banner" not in st.session_state:
+    st.session_state.final_banner = None
+
+# Stripe / payment state
+if "payment_url" not in st.session_state:
+    st.session_state.payment_url = None
+if "payment_session_id" not in st.session_state:
+    st.session_state.payment_session_id = None
+if "payment_verified" not in st.session_state:
+    st.session_state.payment_verified = False
+if "post_payment_done" not in st.session_state:
+    st.session_state.post_payment_done = False
 
 
 # ============================================================
-# PROGRESS / HELPERS
+# PROGRESS LOG
 # ============================================================
 def log(msg: str) -> None:
     ts = time.strftime("%H:%M:%S")
     st.session_state.progress_log.append(f"{ts} — {msg}")
 
 
-def render_progress_box(height: int = 205) -> None:
+def render_progress_box(height: int = 320) -> None:
     st.text_area(
-        "System progress / live status",
+        "System progress",
         value="\n".join(st.session_state.progress_log) if st.session_state.progress_log else "",
         height=height,
         disabled=True,
     )
-
-
-def render_banner() -> None:
-    banner = st.session_state.get("final_banner")
-    if not banner:
-        return
-
-    btype = banner.get("type", "info")
-    title = banner.get("title", "")
-    detail = banner.get("detail", "")
-
-    if btype == "success":
-        st.success(f"{title}\n\n{detail}")
-    elif btype == "error":
-        st.error(f"{title}\n\n{detail}")
-    elif btype == "warning":
-        st.warning(f"{title}\n\n{detail}")
-    else:
-        st.info(f"{title}\n\n{detail}")
 
 
 def reset_app_state() -> None:
@@ -275,6 +259,9 @@ def reset_app_state() -> None:
     st.rerun()
 
 
+# ============================================================
+# HELPERS
+# ============================================================
 def _to_float(x: Any) -> Optional[float]:
     try:
         if x is None:
@@ -363,6 +350,38 @@ def geocode_au(name: str, state_code: str, timeout: int = 12) -> list[dict[str, 
     return out
 
 
+def maybe_add_attachment(attachments: list[str], maybe_path: Any, label: str = "") -> None:
+    prefix = f"[{label}] " if label else ""
+    if not maybe_path:
+        log(f"{prefix}ATTACH: skipped (worker returned None/empty).")
+        return
+
+    p = Path(str(maybe_path))
+
+    if p.suffix.lower() != ".pdf":
+        log(f"{prefix}ATTACH: skipped (not a PDF): {p}")
+        return
+
+    if str(p) in attachments:
+        log(f"{prefix}ATTACH: skipped (duplicate): {p.name}")
+        return
+
+    try:
+        if not p.exists():
+            log(f"{prefix}ATTACH: skipped (file missing): {p}")
+            return
+
+        size = p.stat().st_size
+        if size <= 1000:
+            log(f"{prefix}ATTACH: skipped (file too small: {size} bytes): {p.name}")
+            return
+
+        attachments.append(str(p))
+        log(f"{prefix}ATTACH: ✅ added {p.name} ({size} bytes)")
+    except Exception as e:
+        log(f"{prefix}ATTACH: skipped (error checking file): {e}")
+
+
 def call_worker_generate_report(module_or_fn: Any, *args, logger=None, **kwargs) -> Any:
     if module_or_fn is None:
         raise RuntimeError("Worker is None (import failed).")
@@ -384,214 +403,6 @@ def call_worker_generate_report(module_or_fn: Any, *args, logger=None, **kwargs)
             pass
 
     return fn(*args, **kwargs)
-
-
-def maybe_add_attachment(attachments: list[str], maybe_path: Any, label: str = "") -> None:
-    prefix = f"[{label}] " if label else ""
-    if not maybe_path:
-        log(f"{prefix}ATTACH: skipped (worker returned None/empty).")
-        return
-
-    # unwrap common worker result shapes
-    if isinstance(maybe_path, dict):
-        maybe_path = maybe_path.get("result")
-    elif isinstance(maybe_path, (tuple, list)):
-        picked = None
-        for item in maybe_path:
-            if isinstance(item, (str, os.PathLike)) and str(item).strip():
-                picked = item
-                break
-            if isinstance(item, dict) and item.get("result"):
-                picked = item.get("result")
-                break
-        maybe_path = picked
-
-    if not maybe_path:
-        log(f"{prefix}ATTACH: skipped (no usable path after normalising).")
-        return
-
-    p = Path(str(maybe_path))
-    if p.suffix.lower() != ".pdf":
-        log(f"{prefix}ATTACH: skipped (not a PDF): {p}")
-        return
-    if str(p) in attachments:
-        log(f"{prefix}ATTACH: skipped (duplicate): {p.name}")
-        return
-
-    try:
-        if not p.exists():
-            log(f"{prefix}ATTACH: skipped (file missing): {p}")
-            return
-        size = p.stat().st_size
-        if size <= 1000:
-            log(f"{prefix}ATTACH: skipped (file too small: {size} bytes): {p.name}")
-            return
-        attachments.append(str(p))
-        log(f"{prefix}ATTACH: ✅ added {p.name} ({size} bytes)")
-    except Exception as e:
-        log(f"{prefix}ATTACH: skipped (error checking file): {e}")
-
-
-def looks_like_email(email: str) -> bool:
-    email = (email or "").strip()
-    if not email:
-        return False
-    return re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) is not None
-
-
-def pricing_for_reports(selected: list[str]) -> tuple[int, str, list[str]]:
-    order = ["Surf", "Sky", "Weather", "Trip"]
-    sel = [x for x in order if x in (selected or [])]
-    if len(sel) == 4:
-        return BUNDLE_PRICE_CENTS, "Bundle (all 4)", sel
-    return PRICE_PER_REPORT_CENTS * len(sel), f"{len(sel)} report(s) @ $3.00", sel
-
-
-def cents_to_str(cents: int) -> str:
-    return f"${cents / 100:.2f} AUD"
-
-
-def stripe_ready() -> tuple[bool, str]:
-    if stripe is None:
-        return False, "Stripe library not installed. Run: pip install stripe python-dotenv"
-    if not STRIPE_SECRET_KEY:
-        return False, "Missing STRIPE_SECRET_KEY in config/.env"
-    return True, "OK"
-
-
-def _get_query_params() -> dict[str, list[str]]:
-    try:
-        qp = st.query_params  # type: ignore
-        out: dict[str, list[str]] = {}
-        for k in qp.keys():
-            v = qp.get(k)
-            if isinstance(v, list):
-                out[k] = [str(x) for x in v]
-            elif v is None:
-                out[k] = []
-            else:
-                out[k] = [str(v)]
-        return out
-    except Exception:
-        return st.experimental_get_query_params()  # type: ignore
-
-
-def _clear_query_params() -> None:
-    try:
-        st.query_params.clear()  # type: ignore
-    except Exception:
-        st.experimental_set_query_params()  # type: ignore
-
-
-def _safe_filename(text: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_\-]+", "_", text.strip())
-    return cleaned[:120] or "state"
-
-
-def _state_file_for_session(session_id: str) -> Path:
-    return PAY_STATE_DIR / f"{_safe_filename(session_id)}.json"
-
-
-def save_checkout_context(session_id: str, payload: dict[str, Any], amount_cents: int, label: str) -> None:
-    p = _state_file_for_session(session_id)
-    data = {
-        "confirmed_ok": True,
-        "confirmed_payload": payload,
-        "expected_amount_cents": amount_cents,
-        "pricing_label": label,
-        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
-def load_checkout_context(session_id: str) -> dict[str, Any] | None:
-    p = _state_file_for_session(session_id)
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def delete_checkout_context(session_id: str) -> None:
-    p = _state_file_for_session(session_id)
-    try:
-        if p.exists():
-            p.unlink()
-    except Exception:
-        pass
-
-
-def create_checkout_session(user_email: str, user_name: str, reports: list[str], location: str, amount_cents: int, label: str) -> tuple[str, str]:
-    assert stripe is not None
-    stripe.api_key = STRIPE_SECRET_KEY
-
-    success_url = f"{APP_BASE_URL}/?paid=1&session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{APP_BASE_URL}/?cancelled=1"
-
-    if len(reports) == 4:
-        line_items = [
-            {
-                "price_data": {
-                    "currency": CURRENCY,
-                    "product_data": {"name": "Sentinel Access — Bundle (4 reports)"},
-                    "unit_amount": BUNDLE_PRICE_CENTS,
-                },
-                "quantity": 1,
-            }
-        ]
-    else:
-        line_items = []
-        for rt in reports:
-            line_items.append(
-                {
-                    "price_data": {
-                        "currency": CURRENCY,
-                        "product_data": {"name": f"Sentinel Access — {rt} report"},
-                        "unit_amount": PRICE_PER_REPORT_CENTS,
-                    },
-                    "quantity": 1,
-                }
-            )
-
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        payment_method_types=["card"],
-        customer_email=user_email or None,
-        line_items=line_items,
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={
-            "user_name": user_name or "",
-            "user_email": user_email or "",
-            "reports": ",".join(reports or []),
-            "location": location or "",
-            "pricing_label": label,
-            "expected_amount_cents": str(amount_cents),
-        },
-    )
-    return str(session.id), str(session.url)
-
-
-def verify_session_paid(session_id: str) -> tuple[bool, str]:
-    ok, why = stripe_ready()
-    if not ok:
-        return False, why
-
-    assert stripe is not None
-    stripe.api_key = STRIPE_SECRET_KEY
-
-    try:
-        sess = stripe.checkout.Session.retrieve(session_id)
-        status = getattr(sess, "payment_status", None)
-        amount_total = getattr(sess, "amount_total", None)
-        if status == "paid":
-            amount_str = cents_to_str(int(amount_total)) if amount_total is not None else "paid"
-            return True, f"Payment confirmed: {amount_str}"
-        return False, f"Payment not confirmed yet (status={status})"
-    except Exception as e:
-        return False, f"Stripe verify error: {e}"
 
 
 def send_email_via_sender(
@@ -618,71 +429,6 @@ def send_email_via_sender(
         return True, "Email sent."
     except Exception as e:
         return False, str(e)
-
-
-def sync_report_types_from_checkboxes() -> list[str]:
-    selected: list[str] = []
-    if st.session_state.get("report_surf"):
-        selected.append("Surf")
-    if st.session_state.get("report_sky"):
-        selected.append("Sky")
-    if st.session_state.get("report_weather"):
-        selected.append("Weather")
-    if st.session_state.get("report_trip"):
-        selected.append("Trip")
-    st.session_state.report_types = selected
-    return selected
-
-
-def get_flow_state() -> dict[str, Any]:
-    user_name = (st.session_state.get("user_name") or "").strip()
-    user_email = (st.session_state.get("user_email") or "").strip()
-    report_types = st.session_state.get("report_types") or []
-    main_location = st.session_state.get("main_location")
-
-    step1_done = bool(user_name) and looks_like_email(user_email)
-    step2_done = bool(report_types) and bool(main_location)
-    step3_done = bool(st.session_state.get("confirmed_ok"))
-    step4_done = bool(st.session_state.get("paid_ok"))
-
-    if not step1_done:
-        current_step = 1
-    elif not step2_done:
-        current_step = 2
-    elif not step3_done:
-        current_step = 3
-    elif not step4_done:
-        current_step = 4
-    else:
-        current_step = 5
-
-    return {
-        "step1_done": step1_done,
-        "step2_done": step2_done,
-        "step3_done": step3_done,
-        "step4_done": step4_done,
-        "current_step": current_step,
-    }
-
-
-def render_step_status(flow: dict[str, Any], amount_cents: int, label: str) -> None:
-    def yn(v: bool) -> str:
-        return "Done" if v else "Waiting"
-
-    st.markdown(
-        f"""
-        <div class="sa-step-card">
-          <div class="sa-step-title">Step progress</div>
-          <div class="sa-step-line">Step 1 — Name + email: {yn(flow["step1_done"])}</div>
-          <div class="sa-step-line">Step 2 — Reports + location: {yn(flow["step2_done"])}</div>
-          <div class="sa-step-line">Step 3 — Confirm selections: {yn(flow["step3_done"])}</div>
-          <div class="sa-step-line">Step 4 — Payment: {yn(flow["step4_done"])}</div>
-          <div class="sa-step-line">Step 5 — Generate &amp; Email: {"Ready" if flow["current_step"] == 5 else "Locked"}</div>
-          <div class="sa-step-line">Price: {cents_to_str(amount_cents) if amount_cents > 0 else "Select report(s)"} {("— " + label) if amount_cents > 0 else ""}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 # ============================================================
@@ -719,86 +465,22 @@ if not location_names:
 
 
 # ============================================================
-# HANDLE RETURN FROM STRIPE
-# ============================================================
-qp = _get_query_params()
-paid_flag = (qp.get("paid") or [""])[0]
-session_id = (qp.get("session_id") or [""])[0]
-cancelled = (qp.get("cancelled") or [""])[0]
-
-if cancelled == "1":
-    st.session_state.paid_ok = False
-    st.session_state.checkout_session_id = None
-    st.session_state.checkout_url = None
-    st.session_state.auto_redirect_url = None
-    st.session_state.final_banner = {
-        "type": "error",
-        "title": "Payment cancelled",
-        "detail": "No charge was made.",
-    }
-    _clear_query_params()
-
-if paid_flag == "1" and session_id:
-    ok, msg = verify_session_paid(session_id)
-    if ok:
-        ctx = load_checkout_context(session_id)
-        if ctx and isinstance(ctx.get("confirmed_payload"), dict):
-            st.session_state.confirmed_payload = ctx["confirmed_payload"]
-            st.session_state.confirmed_ok = bool(ctx.get("confirmed_ok", True))
-            st.session_state.expected_amount_cents = ctx.get("expected_amount_cents")
-        st.session_state.paid_ok = True
-        st.session_state.checkout_session_id = session_id
-        st.session_state.checkout_url = None
-        st.session_state.auto_redirect_url = None
-        st.session_state.paid_summary = msg
-        st.session_state.final_banner = {
-            "type": "success",
-            "title": "Step 4 complete",
-            "detail": "Payment confirmed. Step 5 is now ready below.",
-        }
-        st.session_state.post_pay_focus = True
-        _clear_query_params()
-    else:
-        st.session_state.paid_ok = False
-        st.session_state.final_banner = {
-            "type": "error",
-            "title": "Payment not confirmed",
-            "detail": msg,
-        }
-
-
-# ============================================================
-# ACTIONS
+# ACTIONS (callbacks)
 # ============================================================
 def confirm_action() -> None:
     st.session_state.confirmed_ok = False
     st.session_state.confirmed_payload = None
     st.session_state.final_banner = None
+    st.session_state.payment_url = None
+    st.session_state.payment_session_id = None
+    st.session_state.payment_verified = False
+    st.session_state.post_payment_done = False
 
-    user_name = (st.session_state.get("user_name") or "").strip()
-    user_email = (st.session_state.get("user_email") or "").strip()
+    user_name = st.session_state.get("user_name", "")
+    user_email = st.session_state.get("user_email", "")
+
     report_types = st.session_state.get("report_types") or []
     main_location = st.session_state.get("main_location")
-
-    if not looks_like_email(user_email) or not user_name:
-        msg = "Enter name and a valid email before confirming."
-        log(f"ERROR: {msg}")
-        st.session_state.final_banner = {
-            "type": "error",
-            "title": "Step 1 incomplete",
-            "detail": msg,
-        }
-        return
-
-    if not report_types or not main_location:
-        msg = "Choose at least one report and a location before confirming."
-        log(f"ERROR: {msg}")
-        st.session_state.final_banner = {
-            "type": "error",
-            "title": "Step 2 incomplete",
-            "detail": msg,
-        }
-        return
 
     trip_payload = None
     if "Trip" in report_types:
@@ -812,8 +494,8 @@ def confirm_action() -> None:
         }
 
     summary_parts = [
-        f"User: {user_name} | {user_email}",
-        f"Reports: {', '.join(report_types)}",
+        f"User: {user_name or '(no name)'} | {user_email or '(no email)'}",
+        f"Reports: {', '.join(report_types) if report_types else '(none)'}",
         f"Location: {main_location}",
     ]
     if trip_payload:
@@ -827,19 +509,9 @@ def confirm_action() -> None:
         "summary": " | ".join(summary_parts),
     }
     st.session_state.confirmed_ok = True
-    st.session_state.paid_ok = False
-    st.session_state.paid_summary = None
-    st.session_state.checkout_session_id = None
-    st.session_state.checkout_url = None
-    st.session_state.auto_redirect_url = None
 
     log("Confirmed selections.")
     log(st.session_state.confirmed_payload["summary"])
-    st.session_state.final_banner = {
-        "type": "success",
-        "title": "Step 3 complete",
-        "detail": "Selections confirmed. Step 4 Pay is now next.",
-    }
 
 
 def add_location_action() -> None:
@@ -855,7 +527,7 @@ def add_location_action() -> None:
         log("ERROR: Click 'Find matches' first.")
         return
     if not chosen_label:
-        log("ERROR: Select a match before saving.")
+        log("ERROR: Select a match from the dropdown before saving.")
         return
 
     chosen = None
@@ -888,108 +560,93 @@ def add_location_action() -> None:
         log(f"ERROR saving new location: {e}")
 
 
-def pay_action() -> None:
-    st.session_state.paid_ok = False
-    st.session_state.checkout_session_id = None
-    st.session_state.checkout_url = None
-    st.session_state.auto_redirect_url = None
-    st.session_state.final_banner = None
+def generate_pay_action() -> None:
+    if not st.session_state.get("confirmed_ok"):
+        log("ERROR: Please Confirm selections first.")
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "Confirmation needed",
+            "detail": "Please confirm your selections before continuing to payment.",
+        }
+        return
+
+    st.session_state.is_running = True
+    st.session_state.payment_url = None
+    st.session_state.payment_session_id = None
+    st.session_state.payment_verified = False
+    st.session_state.post_payment_done = False
+    st.session_state.final_banner = {
+        "type": "info",
+        "title": "Preparing payment…",
+        "detail": "Creating your Stripe checkout session.",
+    }
 
     payload = st.session_state.get("confirmed_payload") or {}
     user = payload.get("user") or {}
-    reports: list[str] = payload.get("report_types") or []
-    location = payload.get("main_location") or ""
-    user_email = str(user.get("email") or "").strip()
+    report_types: list[str] = payload.get("report_types") or []
+    main_location = payload.get("main_location")
 
-    if not reports or not payload:
+    user_name = user.get("name") or ""
+    user_email = user.get("email") or ""
+
+    if not report_types:
+        st.session_state.is_running = False
         st.session_state.final_banner = {
             "type": "error",
-            "title": "Step 3 required",
-            "detail": "Confirm selections before payment.",
+            "title": "No reports selected",
+            "detail": "Please select at least one report before continuing.",
         }
         return
 
     if not looks_like_email(user_email):
+        st.session_state.is_running = False
         st.session_state.final_banner = {
             "type": "error",
-            "title": "Email required",
-            "detail": "Please enter a valid email before payment.",
+            "title": "Valid email required",
+            "detail": "Please enter a valid email before continuing to payment.",
         }
         return
 
-    ok, why = stripe_ready()
-    if not ok:
-        st.session_state.final_banner = {
-            "type": "error",
-            "title": "Stripe not ready",
-            "detail": why,
-        }
-        return
-
-    amount_cents, label, normalized = pricing_for_reports(reports)
-    if amount_cents <= 0:
-        st.session_state.final_banner = {
-            "type": "error",
-            "title": "Invalid selection",
-            "detail": "Choose at least one report.",
-        }
-        return
+    if len(report_types) == 4:
+        amount_cents = BUNDLE_PRICE_CENTS
+        pricing_label = "Bundle (4 reports)"
+    else:
+        amount_cents = len(report_types) * PRICE_PER_REPORT_CENTS
+        pricing_label = f"{len(report_types)} report(s)"
 
     try:
-        sess_id, sess_url = create_checkout_session(
+        session_id, session_url = create_checkout_session(
             user_email=user_email,
-            user_name=str(user.get("name") or ""),
-            reports=normalized,
-            location=str(location),
+            user_name=user_name,
+            reports=report_types,
+            location=main_location,
             amount_cents=amount_cents,
-            label=label,
+            label=pricing_label,
         )
-        save_checkout_context(sess_id, payload, amount_cents, label)
-        st.session_state.checkout_session_id = sess_id
-        st.session_state.checkout_url = sess_url
-        st.session_state.auto_redirect_url = None
-        st.session_state.expected_amount_cents = amount_cents
+
+        st.session_state.payment_session_id = session_id
+        st.session_state.payment_url = session_url
+        st.session_state.is_running = False
         st.session_state.final_banner = {
-            "type": "info",
-            "title": "Step 4 ready",
-            "detail": "Continue to Stripe using the button below.",
+            "type": "success",
+            "title": "✅ Payment ready",
+            "detail": "Click Pay now below to continue to Stripe.",
         }
-        log(f"PAY: Checkout session created: {sess_id} for {cents_to_str(amount_cents)}")
-        st.rerun()
+        log(f"Stripe session created: {session_id}")
+
     except Exception as e:
+        st.session_state.is_running = False
         st.session_state.final_banner = {
             "type": "error",
             "title": "Stripe error",
             "detail": str(e),
         }
-        log(f"PAY ERROR: {e}")
+        log(f"Stripe session error: {e}")
 
 
-def generate_and_email_action() -> None:
-    if not st.session_state.get("confirmed_ok"):
-        st.session_state.final_banner = {
-            "type": "error",
-            "title": "Step 3 required",
-            "detail": "Please confirm selections first.",
-        }
+def fulfill_after_payment() -> None:
+    if st.session_state.get("post_payment_done"):
         return
-
-    if not st.session_state.get("paid_ok"):
-        st.session_state.final_banner = {
-            "type": "error",
-            "title": "Step 4 required",
-            "detail": "Please complete payment before generating.",
-        }
-        return
-
-    st.session_state.is_running = True
-    st.session_state.final_banner = {
-        "type": "info",
-        "title": "Step 5 running",
-        "detail": "Generating reports and preparing email.",
-    }
-    st.session_state.progress_log = []
-    st.session_state.outputs = {}
 
     payload = st.session_state.get("confirmed_payload") or {}
     user = payload.get("user") or {}
@@ -997,16 +654,20 @@ def generate_and_email_action() -> None:
     main_location = payload.get("main_location")
     trip_cfg = payload.get("trip")
 
-    if not report_types:
-        st.session_state.is_running = False
+    if not report_types or not main_location:
         st.session_state.final_banner = {
             "type": "error",
-            "title": "Nothing to run",
-            "detail": "No reports executed successfully.",
+            "title": "Missing session data",
+            "detail": "Payment returned, but report selections are missing. Please start again.",
         }
         return
 
-    log(payload.get("summary", "Starting run…"))
+    st.session_state.is_running = True
+    st.session_state.progress_log = []
+    st.session_state.outputs = {}
+
+    log("Payment confirmed ✅")
+    log(payload.get("summary", "Starting fulfillment…"))
 
     output_dir = str(Path.cwd() / "outputs")
     Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -1017,14 +678,12 @@ def generate_and_email_action() -> None:
         st.session_state.final_banner = {
             "type": "error",
             "title": "Location error",
-            "detail": "Main location not found in LocationManager.",
+            "detail": "Main location was not found in LocationManager.",
         }
         return
 
     lat, lon, dbg = extract_lat_lon(loc_payload)
     if lat is None or lon is None:
-        log("ERROR: Selected location missing latitude/longitude in locations.json.")
-        log(f"DEBUG: {dbg}")
         st.session_state.is_running = False
         st.session_state.final_banner = {
             "type": "error",
@@ -1038,11 +697,13 @@ def generate_and_email_action() -> None:
         surf_profile = loc_payload["surf_profile"]
 
     attachments: list[str] = []
-    errors: list[str] = []
     ran_any = False
+    errors: list[str] = []
 
-    _, label, selected_in_order = pricing_for_reports(report_types)
-    log("Run initialised successfully.")
+    order = ["Surf", "Sky", "Weather", "Trip"]
+    selected_in_order = [x for x in order if x in report_types]
+
+    log("RUN START ✅")
 
     for rt in selected_in_order:
         log(f"--- Running {rt.upper()} ---")
@@ -1115,18 +776,16 @@ def generate_and_email_action() -> None:
             st.session_state.outputs[rt] = {"error": str(e)}
             errors.append(f"{rt}: {e}")
             log(f"{rt.upper()} ERROR: {e}")
+            log(f"[{rt}] ATTACH: skipped due to worker error.")
 
     if not ran_any:
         st.session_state.is_running = False
         st.session_state.final_banner = {
             "type": "error",
             "title": "Nothing ran",
-            "detail": "No reports executed successfully.",
+            "detail": "No reports executed successfully after payment.",
         }
         return
-
-    # final attachment clean-up before email sender
-    attachments = [str(Path(a)) for a in attachments if a and str(a).strip()]
 
     log("Sending email…")
     log(f"ATTACHMENTS: {len(attachments)} PDF(s) will be sent.")
@@ -1141,18 +800,15 @@ def generate_and_email_action() -> None:
         "Attached are your Sentinel Access report(s):",
         f"- Reports: {', '.join(selected_in_order)}",
         f"- Location: {main_location}",
-        "",
-        f"Payment: {st.session_state.paid_summary or label}",
-        "",
-        "Sentinel Access",
     ]
     if "Trip" in selected_in_order and trip_cfg:
-        body_lines.insert(5, f"- Trip: {trip_cfg.get('start')} → {trip_cfg.get('stop1')} → {trip_cfg.get('stop2')}")
+        body_lines.append(f"- Trip: {trip_cfg.get('start')} → {trip_cfg.get('stop1')} → {trip_cfg.get('stop2')}")
+    body_lines += ["", "Sentinel Access"]
     body = "\n".join(body_lines)
 
     ok, msg = send_email_via_sender(
-        to_email=str(user.get("email") or ""),
-        username=str(user.get("name") or ""),
+        to_email=user.get("email") or "",
+        username=user.get("name") or "",
         subject=subject,
         body=body,
         attachments=attachments,
@@ -1160,33 +816,23 @@ def generate_and_email_action() -> None:
     log(f"{'EMAIL OK' if ok else 'EMAIL ERROR'}: {msg}")
 
     st.session_state.is_running = False
+    st.session_state.post_payment_done = True
+    st.session_state.payment_url = None
 
     if ok:
-        detail = f"Email sent to {user.get('email') or '(no email)'} with {len(attachments)} PDF(s)."
+        detail = f"Email sent to {user.get('email') or '(no email)'} with {len(attachments)} PDF(s) attached."
         if errors:
             detail += " (Some reports had errors—see System progress.)"
-        st.session_state.final_banner = {
-            "type": "success",
-            "title": "Step 5 complete",
-            "detail": detail,
-        }
+        st.session_state.final_banner = {"type": "success", "title": "✅ All complete — Email sent", "detail": detail}
         try:
             st.toast("✅ All complete — email sent", icon="✅")
         except Exception:
             pass
-
-        time.sleep(2)
-
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        st.rerun()
-
     else:
-        st.session_state.final_banner = {
-            "type": "error",
-            "title": "Completed, but email failed",
-            "detail": f"Email failed: {msg}",
-        }
+        detail = f"Email failed: {msg}"
+        if errors:
+            detail += " (Some reports also had errors—see System progress.)"
+        st.session_state.final_banner = {"type": "error", "title": "❌ Completed, but email failed", "detail": detail}
         try:
             st.toast("❌ Completed, but email failed", icon="❌")
         except Exception:
@@ -1198,165 +844,108 @@ def generate_and_email_action() -> None:
 
 
 # ============================================================
-# PRE-UI DERIVED STATE
+# HANDLE STRIPE RETURN
 # ============================================================
-sync_report_types_from_checkboxes()
-flow = get_flow_state()
-amount_cents, label, _ = pricing_for_reports(st.session_state.get("report_types") or [])
+query = st.query_params
+if query.get("cancelled") == "1":
+    st.session_state.final_banner = {
+        "type": "error",
+        "title": "Payment cancelled",
+        "detail": "You cancelled the Stripe checkout.",
+    }
+    st.session_state.payment_url = None
+
+paid_flag = query.get("paid")
+session_id_from_query = query.get("session_id")
+
+if paid_flag == "1" and session_id_from_query and not st.session_state.get("post_payment_done"):
+    paid_ok, paid_msg = verify_session_paid(str(session_id_from_query))
+    if paid_ok:
+        st.session_state.payment_verified = True
+        st.session_state.final_banner = {
+            "type": "success",
+            "title": "✅ Payment confirmed",
+            "detail": paid_msg,
+        }
+        fulfill_after_payment()
+    else:
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "Payment not confirmed",
+            "detail": paid_msg,
+        }
 
 
 # ============================================================
-# UI LAYOUT
+# 3 PANELS
 # ============================================================
-left, middle, right = st.columns([0.27, 0.50, 0.23], gap="medium")
+left, middle, right = st.columns([0.30, 0.44, 0.26], gap="large")
 
+# LEFT
 with left:
-    with st.container(border=True):
-        st.subheader("Step 1")
-        st.caption("Enter your details first.")
+    with st.container():
+        st.subheader("Instructions")
+        st.markdown(
+            """
+            1) Enter Name + Email  
+            2) Select report(s) + location(s)  
+            3) Confirm & go to payment  
+            """
+        )
+        st.caption("Optional: add a new location if needed before confirming.")
+        st.divider()
+        st.subheader("User details")
         st.text_input("Name", key="user_name", disabled=st.session_state.is_running)
         st.text_input("Email", key="user_email", disabled=st.session_state.is_running)
+        st.button("Reset / Refresh page", use_container_width=True, on_click=reset_app_state, disabled=st.session_state.is_running)
 
-        if flow["current_step"] == 1:
-            st.info("Current step: enter name and valid email.")
-        elif flow["step1_done"]:
-            st.caption("Step 1 complete")
-
-        st.button(
-            "Reset / Refresh page",
-            width="stretch",
-            on_click=reset_app_state,
-            disabled=st.session_state.is_running,
-            key="reset_page_btn",
-        )
-
+# MIDDLE
 with middle:
-    with st.container(border=True):
-        st.markdown('<span id="step-five-anchor" class="sa-anchor"></span>', unsafe_allow_html=True)
+    with st.container():
+        st.subheader("Report setup")
 
-        if st.session_state.get("post_pay_focus"):
-            components.html(
-                """
-                <html>
-                  <body>
-                    <script>
-                      window.parent.location.hash = "step-five-anchor";
-                      window.parent.scrollTo({top: 0, behavior: "smooth"});
-                    </script>
-                  </body>
-                </html>
-                """,
-                height=0,
-            )
-            st.session_state.post_pay_focus = False
+        banner = st.session_state.get("final_banner")
+        payment_url = st.session_state.get("payment_url")
 
-        render_banner()
-        render_step_status(flow, amount_cents, label)
+        if banner:
+            btype = banner.get("type", "info")
+            title = banner.get("title", "")
+            detail = banner.get("detail", "")
 
-        st.subheader("Step 2")
-        st.caption("Choose report(s) and location.")
-        c1, c2 = st.columns(2, gap="small")
-        with c1:
-            st.checkbox("Surf", key="report_surf", disabled=st.session_state.is_running)
-            st.checkbox("Sky", key="report_sky", disabled=st.session_state.is_running)
-        with c2:
-            st.checkbox("Weather", key="report_weather", disabled=st.session_state.is_running)
-            st.checkbox("Trip", key="report_trip", disabled=st.session_state.is_running)
+            if btype == "success":
+                st.success(f"{title}\n\n{detail}")
+            elif btype == "error":
+                st.error(f"{title}\n\n{detail}")
+            else:
+                st.info(f"{title}\n\n{detail}")
 
-        sync_report_types_from_checkboxes()
+            if payment_url:
+                st.link_button("💳 Pay now", payment_url, use_container_width=True)
 
-        st.selectbox(
-            "Location",
-            st.session_state.location_names,
-            key="main_location",
+        else:
+            if st.session_state.is_running:
+                st.info("Preparing your Stripe checkout…")
+
+            if payment_url:
+                st.success("Your checkout is ready. Click below to continue to Stripe.")
+                st.link_button("💳 Pay now", payment_url, use_container_width=True)
+
+        st.multiselect(
+            "Report type(s)",
+            ["Surf", "Sky", "Weather", "Trip"],
+            default=["Weather"],
+            key="report_types",
             disabled=st.session_state.is_running,
         )
+        st.selectbox("Location", st.session_state.location_names, key="main_location", disabled=st.session_state.is_running)
 
-        if "Trip" in (st.session_state.get("report_types") or []):
-            st.markdown("**Trip setup**")
-            st.selectbox("Start location", st.session_state.location_names, key="trip_start", disabled=st.session_state.is_running)
-            st.selectbox("Next location", st.session_state.location_names, key="trip_stop1", disabled=st.session_state.is_running)
-            st.selectbox("Next location (2)", st.session_state.location_names, key="trip_stop2", disabled=st.session_state.is_running)
-            st.selectbox("Fuel type", ["Petrol", "Diesel"], key="fuel_type", disabled=st.session_state.is_running)
-            st.number_input("Fuel consumption (L/100km)", min_value=1.0, value=9.5, step=0.1, key="fuel_l_per_100km", disabled=st.session_state.is_running)
-            default_price = 2.10 if (st.session_state.get("fuel_type") or "Petrol") == "Petrol" else 2.20
-            st.number_input("Fuel price ($/L)", min_value=0.0, value=float(default_price), step=0.01, key="fuel_price", disabled=st.session_state.is_running)
-
-        if flow["current_step"] == 2:
-            st.info("Current step: choose report(s) and location.")
-        elif flow["step2_done"]:
-            st.caption("Step 2 complete")
-
-        st.subheader("Step 3")
-        if flow["step3_done"]:
-            st.button("Step 3 Complete — Confirmed", width="stretch", disabled=True, key="step3_done_btn")
-        else:
-            st.button(
-                "Confirm selections",
-                type="primary" if flow["current_step"] == 3 else "secondary",
-                width="stretch",
-                on_click=confirm_action,
-                disabled=st.session_state.is_running or (flow["current_step"] < 3),
-                key="confirm_btn",
-            )
-
-        st.subheader("Step 4")
-        pay_ok, pay_why = stripe_ready()
-        if not pay_ok:
-            st.warning(pay_why)
-
-        if flow["step4_done"]:
-            st.button("Step 4 Complete — Paid", width="stretch", disabled=True, key="step4_done_btn")
-        else:
-            if st.session_state.get("checkout_url") and flow["current_step"] == 4:
-                st.link_button(
-                    "Continue to Stripe",
-                    st.session_state["checkout_url"],
-                    type="primary",
-                    width="stretch",
-                )
-            else:
-                st.button(
-                    "Pay now",
-                    type="primary" if flow["current_step"] == 4 else "secondary",
-                    width="stretch",
-                    on_click=pay_action,
-                    disabled=st.session_state.is_running or (flow["current_step"] != 4) or (not pay_ok),
-                    key="pay_now_btn",
-                )
-
-        st.subheader("Step 5")
-        if st.session_state.get("paid_ok"):
-            st.button(
-                "Generate & Email",
-                type="primary",
-                width="stretch",
-                on_click=generate_and_email_action,
-                disabled=st.session_state.is_running,
-                key="generate_email_btn",
-            )
-        else:
-            st.button(
-                "Generate & Email",
-                width="stretch",
-                disabled=True,
-                key="generate_email_btn_disabled",
-            )
-
-        if flow["current_step"] == 5 and st.session_state.get("paid_ok"):
-            st.success("Current step: click Generate & Email.")
-        elif flow["current_step"] < 5:
-            st.caption("Step 5 will unlock after payment.")
-
-        render_progress_box(height=205)
-
-        with st.expander("➕ Add a new location", expanded=False):
+        with st.expander("➕ Add a new location (standalone)", expanded=False):
             st.text_input("New location name", key="new_loc_name", disabled=st.session_state.is_running)
             st.selectbox("State", ["VIC", "NSW", "QLD", "SA", "WA", "TAS", "NT", "ACT"], key="new_state", disabled=st.session_state.is_running)
 
-            cols2 = st.columns([1, 1], gap="small")
-            with cols2[0]:
-                if st.button("Find matches", width="stretch", disabled=st.session_state.is_running, key="find_matches_btn"):
+            cols = st.columns([1, 1], gap="small")
+            with cols[0]:
+                if st.button("Find matches", use_container_width=True, disabled=st.session_state.is_running):
                     st.session_state.new_location_candidates = []
                     name = (st.session_state.get("new_loc_name") or "").strip()
                     state = st.session_state.get("new_state") or "VIC"
@@ -1376,52 +965,65 @@ with middle:
             candidates = st.session_state.get("new_location_candidates") or []
             if candidates:
                 labels = [c["label"] for c in candidates]
-                current_choice = st.session_state.get("chosen_geo_label")
-                safe_index = labels.index(current_choice) if current_choice in labels else 0
-                st.selectbox(
-                    "Select best match",
-                    labels,
-                    index=safe_index,
-                    key="chosen_geo_label",
-                    disabled=st.session_state.is_running,
-                )
+                st.selectbox("Select best match", labels, key="chosen_geo_label", disabled=st.session_state.is_running)
 
-            with cols2[1]:
+            with cols[1]:
                 st.button(
-                    "Save new location",
+                    "✅ Save new location",
                     type="primary",
-                    width="stretch",
+                    use_container_width=True,
                     on_click=add_location_action,
                     disabled=st.session_state.is_running,
-                    key="save_location_btn",
                 )
 
+        if "Trip" in (st.session_state.get("report_types") or []):
+            st.divider()
+            st.markdown("**Trip setup**")
+            st.selectbox("Start location", st.session_state.location_names, key="trip_start", disabled=st.session_state.is_running)
+            st.selectbox("Next location", st.session_state.location_names, key="trip_stop1", disabled=st.session_state.is_running)
+            st.selectbox("Next location (2)", st.session_state.location_names, key="trip_stop2", disabled=st.session_state.is_running)
+
+            st.selectbox("Fuel type", ["Petrol", "Diesel"], key="fuel_type", disabled=st.session_state.is_running)
+            st.number_input("Fuel consumption (L/100km)", min_value=1.0, value=9.5, step=0.1, key="fuel_l_per_100km", disabled=st.session_state.is_running)
+            default_price = 2.10 if (st.session_state.get("fuel_type") or "Petrol") == "Petrol" else 2.20
+            st.number_input("Fuel price ($/L)", min_value=0.0, value=float(default_price), step=0.01, key="fuel_price", disabled=st.session_state.is_running)
+
+        st.divider()
+        st.button("✅ Confirm selections", type="primary", use_container_width=True, on_click=confirm_action, disabled=st.session_state.is_running)
+        render_progress_box(height=320)
+        st.button("✅ Confirm & go to payment", type="primary", use_container_width=True, on_click=generate_pay_action, disabled=st.session_state.is_running)
+
+# RIGHT
 with right:
-    with st.container(border=True):
+    with st.container():
         st.subheader("Examples")
         tab_surf, tab_sky, tab_weather, tab_trip = st.tabs(["Surf", "Sky", "Weather", "Trip"])
 
         with tab_surf:
-            st.markdown("**Surf example**")
-            st.caption("Today panel + next best day + 7-day trend with surf windows.")
+            if st.toggle("View Surf example", key="ex_surf"):
+                st.markdown("**Surf example**")
+                st.caption("Today panel + next best day + 7-day trend with surf windows.")
 
         with tab_sky:
-            st.markdown("**Sky example**")
-            st.caption("Depends on your sky_worker output structure.")
+            if st.toggle("View Sky example", key="ex_sky"):
+                st.markdown("**Sky example**")
+                st.caption("Depends on your sky_worker output structure.")
 
         with tab_weather:
-            st.markdown("**Weather example**")
-            st.caption("Depends on your weather_worker output structure.")
+            if st.toggle("View Weather example", key="ex_weather"):
+                st.markdown("**Weather example**")
+                st.caption("Depends on your weather_worker output structure.")
 
         with tab_trip:
-            st.markdown("**Trip example**")
-            demo = pd.DataFrame(
-                [
-                    {"Leg": "1. Start → Next", "Distance (km)": 120.0, "Fuel (L)": 11.40, "Fuel cost ($)": 23.94},
-                    {"Leg": "2. Next → Next 2", "Distance (km)": 65.0, "Fuel (L)": 6.18, "Fuel cost ($)": 12.98},
-                ]
-            )
-            st.dataframe(demo, width="stretch", hide_index=True)
+            if st.toggle("View Trip example", key="ex_trip"):
+                st.markdown("**Trip example**")
+                demo = pd.DataFrame(
+                    [
+                        {"Leg": "1. Start → Next", "Distance (km)": 120.0, "Fuel (L)": 11.40, "Fuel cost ($)": 23.94},
+                        {"Leg": "2. Next → Next 2", "Distance (km)": 65.0, "Fuel (L)": 6.18, "Fuel cost ($)": 12.98},
+                    ]
+                )
+                st.dataframe(demo, use_container_width=True, hide_index=True)
 
         outputs = st.session_state.get("outputs") or {}
         if outputs:
