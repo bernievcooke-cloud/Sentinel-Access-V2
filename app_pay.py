@@ -35,8 +35,8 @@ APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8501").strip()
 
 # Stripe config
 CURRENCY = "aud"
-PRICE_PER_REPORT_CENTS = 300
-BUNDLE_PRICE_CENTS = 1000  # all four reports
+PRICE_PER_REPORT_CENTS = 250
+BUNDLE_PRICE_CENTS = 800  # all four reports
 
 # local persistence for checkout context
 PROJECT_ROOT = Path(__file__).resolve().parent
