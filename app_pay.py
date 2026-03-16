@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import time
 from pathlib import Path
@@ -11,16 +12,25 @@ import pandas as pd
 import requests
 import streamlit as st
 
+# ============================================================
+# PAGE CONFIG MUST BE FIRST STREAMLIT COMMAND
+# ============================================================
+st.set_page_config(page_title="Sentinel Access", layout="wide")
+
+# ============================================================
+# OPTIONAL IMPORTS
+# ============================================================
 try:
     from dotenv import load_dotenv
 except Exception:
     load_dotenv = None  # type: ignore
 
+STRIPE_IMPORT_ERROR = None
 try:
     import stripe
-except Exception:
+except Exception as e:
     stripe = None  # type: ignore
-
+    STRIPE_IMPORT_ERROR = str(e)
 
 # ============================================================
 # ENV / STRIPE CONFIG
@@ -32,152 +42,63 @@ if load_dotenv is not None:
         pass
 
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
-APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip()  # e.g. https://sentinel-access-v2-akpcfse5vqn8ufwkmvigwq.streamlit.app
+APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip()
 CURRENCY = os.getenv("CURRENCY", "aud").strip().lower() or "aud"
 
 PRICE_PER_REPORT_CENTS = int(os.getenv("PRICE_PER_REPORT_CENTS", "1500"))
 BUNDLE_PRICE_CENTS = int(os.getenv("BUNDLE_PRICE_CENTS", "5000"))
 
-
-def looks_like_email(x: str) -> bool:
-    x = (x or "").strip()
-    return ("@" in x) and ("." in x.split("@")[-1])
-
-
-def cents_to_str(cents: int) -> str:
-    return f"${cents / 100:,.2f}"
-
-
-def stripe_ready() -> tuple[bool, str]:
-    if stripe is None:
-        return False, "Stripe package failed to import."
-    if not STRIPE_SECRET_KEY:
-        return False, "Missing STRIPE_SECRET_KEY."
-    if not APP_BASE_URL:
-        return False, "Missing APP_BASE_URL."
-    return True, "OK"
-
-
-def create_checkout_session(
-    user_email: str,
-    user_name: str,
-    reports: list[str],
-    location: str,
-    amount_cents: int,
-    label: str,
-) -> tuple[str, str]:
-    ok, why = stripe_ready()
-    if not ok:
-        raise RuntimeError(why)
-
-    assert stripe is not None
-    stripe.api_key = STRIPE_SECRET_KEY
-
-    success_url = f"{APP_BASE_URL}/?paid=1&session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{APP_BASE_URL}/?cancelled=1"
-
-    if len(reports) == 4:
-        line_items = [
-            {
-                "price_data": {
-                    "currency": CURRENCY,
-                    "product_data": {"name": "Sentinel Access — Bundle (4 reports)"},
-                    "unit_amount": BUNDLE_PRICE_CENTS,
-                },
-                "quantity": 1,
-            }
-        ]
-    else:
-        line_items = []
-        for rt in reports:
-            line_items.append(
-                {
-                    "price_data": {
-                        "currency": CURRENCY,
-                        "product_data": {"name": f"Sentinel Access — {rt} report"},
-                        "unit_amount": PRICE_PER_REPORT_CENTS,
-                    },
-                    "quantity": 1,
-                }
-            )
-
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        payment_method_types=["card"],
-        customer_email=user_email or None,
-        line_items=line_items,
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={
-            "user_name": user_name or "",
-            "user_email": user_email or "",
-            "reports": ",".join(reports or []),
-            "location": location or "",
-            "pricing_label": label,
-            "expected_amount_cents": str(amount_cents),
-        },
-    )
-    return str(session.id), str(session.url)
-
-
-def verify_session_paid(session_id: str) -> tuple[bool, str]:
-    ok, why = stripe_ready()
-    if not ok:
-        return False, why
-
-    assert stripe is not None
-    stripe.api_key = STRIPE_SECRET_KEY
-
-    try:
-        sess = stripe.checkout.Session.retrieve(session_id)
-        status = getattr(sess, "payment_status", None)
-        amount_total = getattr(sess, "amount_total", None)
-        if status == "paid":
-            amount_str = cents_to_str(int(amount_total)) if amount_total is not None else "paid"
-            return True, f"Payment confirmed: {amount_str}"
-        return False, f"Payment not confirmed yet (status={status})"
-    except Exception as e:
-        return False, f"Stripe verify error: {e}"
-
-
 # ============================================================
-# IMPORTS
+# IMPORTS WITH VISIBLE ERROR CAPTURE
 # ============================================================
+IMPORT_ERRORS: list[str] = []
+
+
+def register_import_error(name: str, e: Exception) -> None:
+    msg = f"{name} -> {type(e).__name__}: {e}"
+    IMPORT_ERRORS.append(msg)
+    print(f"IMPORT ERROR: {msg}")
+
+
 try:
     from core.location_manager import LocationManager
-except Exception:
+except Exception as e:
     LocationManager = None  # type: ignore
+    register_import_error("core.location_manager", e)
 
 try:
     from core.surf_worker import generate_report as surf_generate_report
-except Exception:
+except Exception as e:
     surf_generate_report = None  # type: ignore
+    register_import_error("core.surf_worker.generate_report", e)
 
 try:
     import core.sky_worker as sky_worker
-except Exception:
+except Exception as e:
     sky_worker = None  # type: ignore
+    register_import_error("core.sky_worker", e)
 
 try:
     import core.weather_worker as weather_worker
-except Exception:
+except Exception as e:
     weather_worker = None  # type: ignore
+    register_import_error("core.weather_worker", e)
 
 try:
     import core.trip_worker as trip_worker
-except Exception:
+except Exception as e:
     trip_worker = None  # type: ignore
+    register_import_error("core.trip_worker", e)
 
 try:
     import core.email_sender as email_sender_mod
-except Exception:
+except Exception as e:
     email_sender_mod = None  # type: ignore
-
+    register_import_error("core.email_sender", e)
 
 # ============================================================
 # STYLE
 # ============================================================
-st.set_page_config(page_title="Sentinel Access", layout="wide")
 st.markdown(
     """
     <style>
@@ -201,6 +122,13 @@ st.markdown(
 
 st.title("Sentinel Access")
 
+# ============================================================
+# SHOW IMPORT ERRORS CLEARLY
+# ============================================================
+if IMPORT_ERRORS:
+    st.error("One or more modules failed to import.")
+    for err in IMPORT_ERRORS:
+        st.caption(err)
 
 # ============================================================
 # SESSION STATE DEFAULTS
@@ -225,7 +153,6 @@ if "is_running" not in st.session_state:
 if "final_banner" not in st.session_state:
     st.session_state.final_banner = None
 
-# Stripe / payment state
 if "payment_url" not in st.session_state:
     st.session_state.payment_url = None
 if "payment_session_id" not in st.session_state:
@@ -237,7 +164,7 @@ if "post_payment_done" not in st.session_state:
 
 
 # ============================================================
-# PROGRESS LOG
+# LOGGING / UI HELPERS
 # ============================================================
 def log(msg: str) -> None:
     ts = time.strftime("%H:%M:%S")
@@ -260,8 +187,17 @@ def reset_app_state() -> None:
 
 
 # ============================================================
-# HELPERS
+# GENERAL HELPERS
 # ============================================================
+def looks_like_email(x: str) -> bool:
+    x = (x or "").strip()
+    return ("@" in x) and ("." in x.split("@")[-1])
+
+
+def cents_to_str(cents: int) -> str:
+    return f"${cents / 100:,.2f}"
+
+
 def _to_float(x: Any) -> Optional[float]:
     try:
         if x is None:
@@ -338,7 +274,7 @@ def geocode_au(name: str, state_code: str, timeout: int = 12) -> list[dict[str, 
         score = 2 if target_admin1.lower() in admin1.lower() else 1
         out.append(
             {
-                "label": f"{item.get('name','?')} — {admin1} — AU",
+                "label": f"{item.get('name', '?')} — {admin1} — AU",
                 "lat": item.get("latitude"),
                 "lon": item.get("longitude"),
                 "admin1": admin1,
@@ -432,6 +368,144 @@ def send_email_via_sender(
 
 
 # ============================================================
+# STRIPE HELPERS
+# ============================================================
+def stripe_ready() -> tuple[bool, str]:
+    if stripe is None:
+        return False, f"Stripe package failed to import: {STRIPE_IMPORT_ERROR or 'unknown error'}"
+    if not STRIPE_SECRET_KEY:
+        return False, "Missing STRIPE_SECRET_KEY."
+    if not APP_BASE_URL:
+        return False, "Missing APP_BASE_URL."
+    if not APP_BASE_URL.startswith(("http://", "https://")):
+        return False, "APP_BASE_URL must start with http:// or https://"
+    return True, "OK"
+
+
+def serialize_trip_payload(trip_payload: Any) -> str:
+    try:
+        return json.dumps(trip_payload or {})
+    except Exception:
+        return "{}"
+
+
+def deserialize_trip_payload(raw: Any) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        obj = json.loads(str(raw))
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+def calculate_amount_cents(reports: list[str]) -> tuple[int, str]:
+    if len(reports) == 4:
+        return BUNDLE_PRICE_CENTS, "Bundle (4 reports)"
+    return len(reports) * PRICE_PER_REPORT_CENTS, f"{len(reports)} report(s)"
+
+
+def create_checkout_session(
+    user_email: str,
+    user_name: str,
+    reports: list[str],
+    location: str,
+    amount_cents: int,
+    label: str,
+    trip_payload: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    ok, why = stripe_ready()
+    if not ok:
+        raise RuntimeError(why)
+
+    assert stripe is not None
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    success_url = f"{APP_BASE_URL}/?paid=1&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{APP_BASE_URL}/?cancelled=1"
+
+    if len(reports) == 4:
+        line_items = [
+            {
+                "price_data": {
+                    "currency": CURRENCY,
+                    "product_data": {"name": "Sentinel Access — Bundle (4 reports)"},
+                    "unit_amount": BUNDLE_PRICE_CENTS,
+                },
+                "quantity": 1,
+            }
+        ]
+    else:
+        line_items = []
+        for rt in reports:
+            line_items.append(
+                {
+                    "price_data": {
+                        "currency": CURRENCY,
+                        "product_data": {"name": f"Sentinel Access — {rt} report"},
+                        "unit_amount": PRICE_PER_REPORT_CENTS,
+                    },
+                    "quantity": 1,
+                }
+            )
+
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        payment_method_types=["card"],
+        customer_email=user_email or None,
+        line_items=line_items,
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            "user_name": user_name or "",
+            "user_email": user_email or "",
+            "reports": ",".join(reports or []),
+            "location": location or "",
+            "pricing_label": label or "",
+            "expected_amount_cents": str(amount_cents),
+            "trip_payload_json": serialize_trip_payload(trip_payload),
+        },
+    )
+    return str(session.id), str(session.url)
+
+
+def verify_session_paid(session_id: str) -> tuple[bool, str]:
+    ok, why = stripe_ready()
+    if not ok:
+        return False, why
+
+    assert stripe is not None
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    try:
+        sess = stripe.checkout.Session.retrieve(session_id)
+        status = getattr(sess, "payment_status", None)
+        amount_total = getattr(sess, "amount_total", None)
+        if status == "paid":
+            amount_str = cents_to_str(int(amount_total)) if amount_total is not None else "paid"
+            return True, f"Payment confirmed: {amount_str}"
+        return False, f"Payment not confirmed yet (status={status})"
+    except Exception as e:
+        return False, f"Stripe verify error: {e}"
+
+
+def retrieve_session_metadata(session_id: str) -> tuple[dict[str, str], str]:
+    ok, why = stripe_ready()
+    if not ok:
+        return {}, why
+
+    assert stripe is not None
+    stripe.api_key = STRIPE_SECRET_KEY
+
+    try:
+        sess = stripe.checkout.Session.retrieve(session_id)
+        md = getattr(sess, "metadata", None) or {}
+        return {str(k): str(v) for k, v in dict(md).items()}, "OK"
+    except Exception as e:
+        return {}, f"Stripe metadata retrieve error: {e}"
+
+
+# ============================================================
 # LOCATION MANAGER
 # ============================================================
 if LocationManager is None:
@@ -465,7 +539,7 @@ if not location_names:
 
 
 # ============================================================
-# ACTIONS (callbacks)
+# ACTIONS
 # ============================================================
 def confirm_action() -> None:
     st.session_state.confirmed_ok = False
@@ -478,7 +552,6 @@ def confirm_action() -> None:
 
     user_name = st.session_state.get("user_name", "")
     user_email = st.session_state.get("user_email", "")
-
     report_types = st.session_state.get("report_types") or []
     main_location = st.session_state.get("main_location")
 
@@ -585,6 +658,7 @@ def generate_pay_action() -> None:
     user = payload.get("user") or {}
     report_types: list[str] = payload.get("report_types") or []
     main_location = payload.get("main_location")
+    trip_cfg = payload.get("trip")
 
     user_name = user.get("name") or ""
     user_email = user.get("email") or ""
@@ -607,21 +681,17 @@ def generate_pay_action() -> None:
         }
         return
 
-    if len(report_types) == 4:
-        amount_cents = BUNDLE_PRICE_CENTS
-        pricing_label = "Bundle (4 reports)"
-    else:
-        amount_cents = len(report_types) * PRICE_PER_REPORT_CENTS
-        pricing_label = f"{len(report_types)} report(s)"
+    amount_cents, pricing_label = calculate_amount_cents(report_types)
 
     try:
         session_id, session_url = create_checkout_session(
             user_email=user_email,
             user_name=user_name,
             reports=report_types,
-            location=main_location,
+            location=main_location or "",
             amount_cents=amount_cents,
             label=pricing_label,
+            trip_payload=trip_cfg,
         )
 
         st.session_state.payment_session_id = session_id
@@ -630,7 +700,7 @@ def generate_pay_action() -> None:
         st.session_state.final_banner = {
             "type": "success",
             "title": "✅ Payment ready",
-            "detail": "Click Pay now below to continue to Stripe.",
+            "detail": f"Click Pay now below to continue to Stripe. Total: {cents_to_str(amount_cents)}",
         }
         log(f"Stripe session created: {session_id}")
 
@@ -644,13 +714,64 @@ def generate_pay_action() -> None:
         log(f"Stripe session error: {e}")
 
 
-def fulfill_after_payment() -> None:
+def build_payload_from_stripe_metadata(session_id: str) -> tuple[dict[str, Any] | None, str]:
+    metadata, msg = retrieve_session_metadata(session_id)
+    if not metadata:
+        return None, msg
+
+    reports = [x.strip() for x in (metadata.get("reports") or "").split(",") if x.strip()]
+    location = metadata.get("location") or ""
+    user_name = metadata.get("user_name") or ""
+    user_email = metadata.get("user_email") or ""
+    trip_payload = deserialize_trip_payload(metadata.get("trip_payload_json"))
+
+    if not reports or not location:
+        return None, "Stripe metadata missing reports or location."
+
+    summary_parts = [
+        f"User: {user_name or '(no name)'} | {user_email or '(no email)'}",
+        f"Reports: {', '.join(reports)}",
+        f"Location: {location}",
+    ]
+    if trip_payload:
+        summary_parts.append(
+            f"Trip: {trip_payload.get('start')} → {trip_payload.get('stop1')} → {trip_payload.get('stop2')}"
+        )
+
+    payload = {
+        "user": {"name": user_name, "email": user_email},
+        "report_types": reports,
+        "main_location": location,
+        "trip": trip_payload,
+        "summary": " | ".join(summary_parts),
+    }
+    return payload, "OK"
+
+
+def fulfill_after_payment(session_id: str) -> None:
     if st.session_state.get("post_payment_done"):
         return
 
     payload = st.session_state.get("confirmed_payload") or {}
+
+    report_types = payload.get("report_types") or []
+    main_location = payload.get("main_location")
+
+    if not report_types or not main_location:
+        rebuilt_payload, rebuilt_msg = build_payload_from_stripe_metadata(session_id)
+        if rebuilt_payload is None:
+            st.session_state.final_banner = {
+                "type": "error",
+                "title": "Missing session data",
+                "detail": f"Payment returned, but report selections could not be rebuilt. {rebuilt_msg}",
+            }
+            return
+        payload = rebuilt_payload
+        st.session_state.confirmed_payload = rebuilt_payload
+        log("Rebuilt fulfillment payload from Stripe metadata.")
+
     user = payload.get("user") or {}
-    report_types: list[str] = payload.get("report_types") or []
+    report_types = payload.get("report_types") or []
     main_location = payload.get("main_location")
     trip_cfg = payload.get("trip")
 
@@ -710,7 +831,7 @@ def fulfill_after_payment() -> None:
         try:
             if rt == "Surf":
                 if surf_generate_report is None:
-                    raise RuntimeError("core.surf_worker.generate_report import failed.")
+                    raise RuntimeError("core.surf_worker.generate_report import failed. See import errors above.")
                 pdf_path = call_worker_generate_report(
                     surf_generate_report,
                     main_location,
@@ -724,6 +845,8 @@ def fulfill_after_payment() -> None:
                 log(f"SURF {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Sky":
+                if sky_worker is None:
+                    raise RuntimeError("core.sky_worker import failed. See import errors above.")
                 pdf_path = call_worker_generate_report(
                     sky_worker,
                     main_location,
@@ -737,6 +860,8 @@ def fulfill_after_payment() -> None:
                 log(f"SKY {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Weather":
+                if weather_worker is None:
+                    raise RuntimeError("core.weather_worker import failed. See import errors above.")
                 pdf_path = call_worker_generate_report(
                     weather_worker,
                     main_location,
@@ -750,6 +875,8 @@ def fulfill_after_payment() -> None:
                 log(f"WEATHER {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Trip":
+                if trip_worker is None:
+                    raise RuntimeError("core.trip_worker import failed. See import errors above.")
                 if not trip_cfg:
                     raise RuntimeError("Trip config missing. Confirm again with Trip selected.")
                 route = [trip_cfg["start"], trip_cfg["stop1"], trip_cfg["stop2"]]
@@ -823,7 +950,11 @@ def fulfill_after_payment() -> None:
         detail = f"Email sent to {user.get('email') or '(no email)'} with {len(attachments)} PDF(s) attached."
         if errors:
             detail += " (Some reports had errors—see System progress.)"
-        st.session_state.final_banner = {"type": "success", "title": "✅ All complete — Email sent", "detail": detail}
+        st.session_state.final_banner = {
+            "type": "success",
+            "title": "✅ All complete — Email sent",
+            "detail": detail,
+        }
         try:
             st.toast("✅ All complete — email sent", icon="✅")
         except Exception:
@@ -832,7 +963,11 @@ def fulfill_after_payment() -> None:
         detail = f"Email failed: {msg}"
         if errors:
             detail += " (Some reports also had errors—see System progress.)"
-        st.session_state.final_banner = {"type": "error", "title": "❌ Completed, but email failed", "detail": detail}
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "❌ Completed, but email failed",
+            "detail": detail,
+        }
         try:
             st.toast("❌ Completed, but email failed", icon="❌")
         except Exception:
@@ -846,8 +981,36 @@ def fulfill_after_payment() -> None:
 # ============================================================
 # HANDLE STRIPE RETURN
 # ============================================================
-query = st.query_params
-if query.get("cancelled") == "1":
+if hasattr(st, "query_params"):
+    query = st.query_params
+
+    def _qp_get(name: str) -> Optional[str]:
+        try:
+            val = query.get(name)
+            if isinstance(val, list):
+                return str(val[0]) if val else None
+            return str(val) if val is not None else None
+        except Exception:
+            return None
+
+    cancelled_flag = _qp_get("cancelled")
+    paid_flag = _qp_get("paid")
+    session_id_from_query = _qp_get("session_id")
+else:
+    query = st.experimental_get_query_params()
+
+    def _qp_get_old(name: str) -> Optional[str]:
+        try:
+            val = query.get(name, [None])[0]
+            return str(val) if val is not None else None
+        except Exception:
+            return None
+
+    cancelled_flag = _qp_get_old("cancelled")
+    paid_flag = _qp_get_old("paid")
+    session_id_from_query = _qp_get_old("session_id")
+
+if cancelled_flag == "1":
     st.session_state.final_banner = {
         "type": "error",
         "title": "Payment cancelled",
@@ -855,19 +1018,17 @@ if query.get("cancelled") == "1":
     }
     st.session_state.payment_url = None
 
-paid_flag = query.get("paid")
-session_id_from_query = query.get("session_id")
-
 if paid_flag == "1" and session_id_from_query and not st.session_state.get("post_payment_done"):
     paid_ok, paid_msg = verify_session_paid(str(session_id_from_query))
     if paid_ok:
         st.session_state.payment_verified = True
+        st.session_state.payment_session_id = str(session_id_from_query)
         st.session_state.final_banner = {
             "type": "success",
             "title": "✅ Payment confirmed",
             "detail": paid_msg,
         }
-        fulfill_after_payment()
+        fulfill_after_payment(str(session_id_from_query))
     else:
         st.session_state.final_banner = {
             "type": "error",
@@ -877,29 +1038,58 @@ if paid_flag == "1" and session_id_from_query and not st.session_state.get("post
 
 
 # ============================================================
+# LOCATION MANAGER PREP
+# ============================================================
+def _worker_status_line(name: str, obj: Any) -> str:
+    return f"{name}: {'OK' if obj is not None else 'Import failed'}"
+
+
+# ============================================================
 # 3 PANELS
 # ============================================================
 left, middle, right = st.columns([0.30, 0.44, 0.26], gap="large")
 
-# LEFT
 with left:
     with st.container():
         st.subheader("Instructions")
         st.markdown(
             """
             1) Enter Name + Email  
-            2) Select report(s) + location(s)  
-            3) Confirm & go to payment  
+            2) Select report(s) + location  
+            3) Add a new location if needed  
+            4) Confirm selections  
+            5) Continue to Stripe payment  
+            6) After payment, reports generate and email automatically  
             """
         )
-        st.caption("Optional: add a new location if needed before confirming.")
+
         st.divider()
         st.subheader("User details")
         st.text_input("Name", key="user_name", disabled=st.session_state.is_running)
         st.text_input("Email", key="user_email", disabled=st.session_state.is_running)
-        st.button("Reset / Refresh page", use_container_width=True, on_click=reset_app_state, disabled=st.session_state.is_running)
 
-# MIDDLE
+        st.divider()
+        st.subheader("System checks")
+
+        ok_stripe, stripe_msg = stripe_ready()
+        if ok_stripe:
+            st.success("Stripe: OK")
+        else:
+            st.error(f"Stripe: {stripe_msg}")
+
+        st.caption(_worker_status_line("Surf worker", surf_generate_report))
+        st.caption(_worker_status_line("Sky worker", sky_worker))
+        st.caption(_worker_status_line("Weather worker", weather_worker))
+        st.caption(_worker_status_line("Trip worker", trip_worker))
+        st.caption(_worker_status_line("Email sender", email_sender_mod))
+
+        st.button(
+            "Reset / Refresh page",
+            use_container_width=True,
+            on_click=reset_app_state,
+            disabled=st.session_state.is_running,
+        )
+
 with middle:
     with st.container():
         st.subheader("Report setup")
@@ -911,7 +1101,6 @@ with middle:
             btype = banner.get("type", "info")
             title = banner.get("title", "")
             detail = banner.get("detail", "")
-
             if btype == "success":
                 st.success(f"{title}\n\n{detail}")
             elif btype == "error":
@@ -919,16 +1108,10 @@ with middle:
             else:
                 st.info(f"{title}\n\n{detail}")
 
-            if payment_url:
-                st.link_button("💳 Pay now", payment_url, use_container_width=True)
-
-        else:
-            if st.session_state.is_running:
-                st.info("Preparing your Stripe checkout…")
-
-            if payment_url:
-                st.success("Your checkout is ready. Click below to continue to Stripe.")
-                st.link_button("💳 Pay now", payment_url, use_container_width=True)
+        if payment_url:
+            st.link_button("💳 Pay now", payment_url, use_container_width=True)
+        elif st.session_state.is_running:
+            st.info("Working…")
 
         st.multiselect(
             "Report type(s)",
@@ -937,11 +1120,22 @@ with middle:
             key="report_types",
             disabled=st.session_state.is_running,
         )
-        st.selectbox("Location", st.session_state.location_names, key="main_location", disabled=st.session_state.is_running)
+
+        st.selectbox(
+            "Location",
+            st.session_state.location_names,
+            key="main_location",
+            disabled=st.session_state.is_running,
+        )
 
         with st.expander("➕ Add a new location (standalone)", expanded=False):
             st.text_input("New location name", key="new_loc_name", disabled=st.session_state.is_running)
-            st.selectbox("State", ["VIC", "NSW", "QLD", "SA", "WA", "TAS", "NT", "ACT"], key="new_state", disabled=st.session_state.is_running)
+            st.selectbox(
+                "State",
+                ["VIC", "NSW", "QLD", "SA", "WA", "TAS", "NT", "ACT"],
+                key="new_state",
+                disabled=st.session_state.is_running,
+            )
 
             cols = st.columns([1, 1], gap="small")
             with cols[0]:
@@ -982,18 +1176,44 @@ with middle:
             st.selectbox("Start location", st.session_state.location_names, key="trip_start", disabled=st.session_state.is_running)
             st.selectbox("Next location", st.session_state.location_names, key="trip_stop1", disabled=st.session_state.is_running)
             st.selectbox("Next location (2)", st.session_state.location_names, key="trip_stop2", disabled=st.session_state.is_running)
-
             st.selectbox("Fuel type", ["Petrol", "Diesel"], key="fuel_type", disabled=st.session_state.is_running)
-            st.number_input("Fuel consumption (L/100km)", min_value=1.0, value=9.5, step=0.1, key="fuel_l_per_100km", disabled=st.session_state.is_running)
+            st.number_input(
+                "Fuel consumption (L/100km)",
+                min_value=1.0,
+                value=9.5,
+                step=0.1,
+                key="fuel_l_per_100km",
+                disabled=st.session_state.is_running,
+            )
             default_price = 2.10 if (st.session_state.get("fuel_type") or "Petrol") == "Petrol" else 2.20
-            st.number_input("Fuel price ($/L)", min_value=0.0, value=float(default_price), step=0.01, key="fuel_price", disabled=st.session_state.is_running)
+            st.number_input(
+                "Fuel price ($/L)",
+                min_value=0.0,
+                value=float(default_price),
+                step=0.01,
+                key="fuel_price",
+                disabled=st.session_state.is_running,
+            )
 
         st.divider()
-        st.button("✅ Confirm selections", type="primary", use_container_width=True, on_click=confirm_action, disabled=st.session_state.is_running)
-        render_progress_box(height=320)
-        st.button("✅ Confirm & go to payment", type="primary", use_container_width=True, on_click=generate_pay_action, disabled=st.session_state.is_running)
+        st.button(
+            "✅ Confirm selections",
+            type="primary",
+            use_container_width=True,
+            on_click=confirm_action,
+            disabled=st.session_state.is_running,
+        )
 
-# RIGHT
+        render_progress_box(height=320)
+
+        st.button(
+            "✅ Confirm & go to payment",
+            type="primary",
+            use_container_width=True,
+            on_click=generate_pay_action,
+            disabled=st.session_state.is_running,
+        )
+
 with right:
     with st.container():
         st.subheader("Examples")
