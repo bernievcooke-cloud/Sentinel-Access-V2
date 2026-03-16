@@ -12,10 +12,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 
 from core.location_manager import LocationManager
 
@@ -28,7 +29,6 @@ def _get_lat_lon_from_location(name: str) -> tuple[float, float]:
     if not isinstance(payload, dict):
         raise ValueError(f"Unknown location: {name}")
 
-    # support both schemas
     lat = payload.get("latitude", payload.get("lat"))
     lon = payload.get("longitude", payload.get("lon"))
 
@@ -52,29 +52,68 @@ def _litres(distance_km: float, fuel_l_per_100km: float) -> float:
     return max(0.0, float(distance_km)) * (float(fuel_l_per_100km) / 100.0)
 
 
-def _make_charts(legs_rows: list[dict[str, Any]], fuel_type: str, price_per_l: float, fuel_l_per_100km: float) -> BytesIO:
+def _make_charts(
+    legs_rows: list[dict[str, Any]],
+    fuel_type: str,
+    price_per_l: float,
+    fuel_l_per_100km: float,
+) -> BytesIO:
     df = pd.DataFrame(legs_rows)
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9.2, 8.2))
+    fig.subplots_adjust(top=0.93, bottom=0.08, left=0.10, right=0.92, hspace=0.38)
 
     names = df["name"].tolist()
     dists = df["dist_km"].tolist()
     costs = df["cost"].tolist()
 
-    bars1 = ax1.bar(names, dists)
-    ax1.set_title("Distance per Leg")
-    ax1.bar_label(bars1, padding=3, fmt="%.1f km", fontsize=9)
-    ax1.set_ylabel("km")
-    ax1.grid(True, axis="y", alpha=0.2)
+    green_main = "#2e7d32"
+    green_soft = "#66bb6a"
+    edge_col = "#1b5e20"
 
-    bars2 = ax2.bar(names, costs)
-    ax2.set_title(f"Fuel Cost per Leg ({fuel_type} @ ${price_per_l:.3f}/L, {fuel_l_per_100km:.1f} L/100km)")
-    ax2.bar_label(bars2, padding=3, fmt="$%.2f", fontsize=9)
-    ax2.set_ylabel("$")
-    ax2.grid(True, axis="y", alpha=0.2)
+    bars1 = ax1.bar(
+        names,
+        dists,
+        color=green_main,
+        edgecolor=edge_col,
+        linewidth=0.7,
+        width=0.55,
+    )
+    ax1.set_title("Distance per Leg", fontsize=12, fontweight="bold", pad=10)
+    ax1.bar_label(bars1, padding=3, fmt="%.1f km", fontsize=8)
+    ax1.set_ylabel("Kilometres", fontsize=9, fontweight="bold")
+    ax1.grid(True, axis="y", alpha=0.18, linewidth=0.7)
+    ax1.set_axisbelow(True)
+    ax1.tick_params(axis="x", labelsize=8)
+    ax1.tick_params(axis="y", labelsize=8)
+    ax1.spines["top"].set_visible(False)
+    ax1.spines["right"].set_visible(False)
 
-    plt.tight_layout()
+    bars2 = ax2.bar(
+        names,
+        costs,
+        color=green_soft,
+        edgecolor=edge_col,
+        linewidth=0.7,
+        width=0.55,
+    )
+    ax2.set_title(
+        f"Fuel Cost per Leg ({fuel_type} @ ${price_per_l:.3f}/L, {fuel_l_per_100km:.1f} L/100km)",
+        fontsize=11,
+        fontweight="bold",
+        pad=10,
+    )
+    ax2.bar_label(bars2, padding=3, fmt="$%.2f", fontsize=8)
+    ax2.set_ylabel("Cost ($)", fontsize=9, fontweight="bold")
+    ax2.grid(True, axis="y", alpha=0.18, linewidth=0.7)
+    ax2.set_axisbelow(True)
+    ax2.tick_params(axis="x", labelsize=8)
+    ax2.tick_params(axis="y", labelsize=8)
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
+
     buf = BytesIO()
-    plt.savefig(buf, format="png", dpi=140, bbox_inches="tight")
+    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
     buf.seek(0)
     return buf
@@ -112,7 +151,10 @@ def generate_report(
         fuel_l_per_100km = float(data.get("fuel_l_per_100km", 9.5))
         price_per_l = float(data.get("fuel_price", 2.10))
 
-        logger(f"Trip worker: target={target} route={route} fuel={fuel_type} {fuel_l_per_100km:.1f}L/100km @ ${price_per_l:.2f}/L")
+        logger(
+            f"Trip worker: target={target} route={route} fuel={fuel_type} "
+            f"{fuel_l_per_100km:.1f}L/100km @ ${price_per_l:.2f}/L"
+        )
 
         legs_rows: list[dict[str, Any]] = []
         total_km = total_l = total_cost = 0.0
@@ -134,7 +176,7 @@ def generate_report(
 
             legs_rows.append(
                 {
-                    "name": f"{s[:3]}->{e[:3]}",
+                    "name": f"{s[:3]}→{e[:3]}",
                     "start": s,
                     "end": e,
                     "dist_km": dist_km,
@@ -150,39 +192,68 @@ def generate_report(
         ppath = os.path.join(output_dir, filename)
 
         styles = getSampleStyleSheet()
-        doc = SimpleDocTemplate(ppath, pagesize=A4, topMargin=0.8 * cm, bottomMargin=0.8 * cm)
+        doc = SimpleDocTemplate(
+            ppath,
+            pagesize=A4,
+            topMargin=0.7 * cm,
+            bottomMargin=0.7 * cm,
+        )
+
+        summary_table = Table(
+            [
+                ["Fuel type", fuel_type],
+                ["Price per litre", f"${price_per_l:.3f}"],
+                ["Consumption", f"{fuel_l_per_100km:.1f} L/100km"],
+                ["Total distance", f"{total_km:.1f} km"],
+                ["Total fuel", f"{total_l:.1f} L"],
+                ["Total cost", f"${total_cost:.2f}"],
+            ],
+            colWidths=[4.6 * cm, 4.8 * cm],
+        )
+        summary_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8f5e9")),
+                    ("BACKGROUND", (1, 0), (1, -1), colors.white),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bdbdbd")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]
+            )
+        )
 
         story = [
             Paragraph(f"<b>TRIP REPORT: {target}</b>", styles["Title"]),
-            Spacer(1, 0.3 * cm),
-            Paragraph(
-                f"<b>Fuel type:</b> {fuel_type} &nbsp;&nbsp; "
-                f"<b>Price:</b> ${price_per_l:.3f}/L &nbsp;&nbsp; "
-                f"<b>Consumption:</b> {fuel_l_per_100km:.1f} L/100km",
-                styles["Normal"],
-            ),
-            Spacer(1, 0.2 * cm),
-            Paragraph(
-                f"<b>Total distance:</b> {total_km:.1f} km &nbsp;&nbsp; "
-                f"<b>Total fuel:</b> {total_l:.1f} L &nbsp;&nbsp; "
-                f"<b>Total cost:</b> ${total_cost:.2f}",
-                styles["Normal"],
-            ),
-            Spacer(1, 0.35 * cm),
+            Spacer(1, 0.20 * cm),
+            Paragraph("<b>Trip Summary</b>", styles["Heading2"]),
+            Spacer(1, 0.12 * cm),
+            summary_table,
+            Spacer(1, 0.28 * cm),
             Paragraph("<b>Leg Breakdown</b>", styles["Heading2"]),
+            Spacer(1, 0.10 * cm),
         ]
 
         for idx, leg in enumerate(legs_rows, start=1):
             story.append(
                 Paragraph(
-                    f"{idx}. <b>{leg['start']} → {leg['end']}</b> "
-                    f"({leg['dist_km']:.1f} km) — {leg['litres']:.1f} L — ${leg['cost']:.2f}",
+                    f"{idx}. <b>{leg['start']} → {leg['end']}</b>  |  "
+                    f"{leg['dist_km']:.1f} km  |  "
+                    f"{leg['litres']:.1f} L  |  "
+                    f"${leg['cost']:.2f}",
                     styles["Normal"],
                 )
             )
+            story.append(Spacer(1, 0.05 * cm))
 
-        story.append(Spacer(1, 0.4 * cm))
-        story.append(Image(chart_buf, 18 * cm, 13.5 * cm))
+        story.append(Spacer(1, 0.25 * cm))
+        story.append(Image(chart_buf, 18.2 * cm, 15.2 * cm))
 
         doc.build(story)
 
