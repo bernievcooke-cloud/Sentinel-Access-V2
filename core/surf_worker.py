@@ -259,8 +259,9 @@ def _plot_day_panel(ax, dfx: pd.DataFrame, title: str):
         ax.text(0.5, 0.5, "No data available for this day window.", ha="center", va="center", transform=ax.transAxes)
         return
 
-    ax.plot(dfx["time"], dfx["swell_wave_height"], lw=2.4, label="Swell (m)")
-    ax.set_ylabel("Swell (m)")
+    # SWELL = RED
+    ax.plot(dfx["time"], dfx["swell_wave_height"], lw=2.4, color="red", label="Swell (m)")
+    ax.set_ylabel("Swell (m)", color="red")
     ax.grid(True, alpha=0.2)
     _format_hour_axis(ax)
 
@@ -270,8 +271,9 @@ def _plot_day_panel(ax, dfx: pd.DataFrame, title: str):
 
     ax_tide = ax.twinx()
     ax_tide.spines["right"].set_position(("axes", 1.12))
-    ax_tide.plot(dfx["time"], dfx["tide_height"], lw=1.4, ls=":", label="Tide (m)")
-    ax_tide.set_ylabel("Tide (m)")
+    # TIDE = GREEN
+    ax_tide.plot(dfx["time"], dfx["tide_height"], lw=1.4, ls=":", color="green", label="Tide (m)")
+    ax_tide.set_ylabel("Tide (m)", color="green")
 
     _shade_surf_windows(ax, dfx)
 
@@ -326,7 +328,6 @@ def generate_report(
       generate_report(location_name="...", coords=[lat, lon], output_dir="...", logger=...)
       generate_report(location_name="...", coords={"lat":..., "lon":...}, output_dir="...", logger=...)
     """
-    # protect against bad logger values
     if not callable(logger):
         logger = print
 
@@ -337,14 +338,12 @@ def generate_report(
             output_dir = str(os.path.join(os.getcwd(), "outputs"))
         os.makedirs(output_dir, exist_ok=True)
 
-        # Prefer coords kw for app-style, else legacy data
         src = coords if coords is not None else data
         lat, lon = _extract_lat_lon(src)
         if lat is None or lon is None:
             logger(f"CRITICAL: Surf worker could not parse lat/lon for target={name}")
             return None
 
-        # surf_profile: legacy expects data[2] dict; allow coords payload to carry it too
         profile = {}
         if isinstance(data, (list, tuple)) and len(data) >= 3 and isinstance(data[2], dict):
             profile = data[2]
@@ -393,6 +392,7 @@ def generate_report(
         scores = _build_surf_score(df)
         best_day = scores.index[0] if not scores.empty else None
         best_break = name if best_day is not None else "None"
+        top_days = list(scores.head(3).index) if not scores.empty else []
 
         fig = plt.figure(figsize=(9.3, 12.1))
         gs = fig.add_gridspec(3, 1, height_ratios=[1.25, 1.25, 1.1], hspace=0.35)
@@ -415,23 +415,48 @@ def generate_report(
             best_df = _get_day_window(df, best_day)
             _plot_day_panel(ax2, best_df, f"2) Next Best Surf Day: {best_day} ({name})")
 
-        ax3.set_title(f"3) 7-Day Trend — {name} — Swell & Wind + Surf Windows", fontweight="bold")
-        ax3.plot(df["time"], df["swell_wave_height"], lw=2.2, label="Swell (m)")
-        ax3.set_ylabel("Swell (m)")
+        ax3.set_title(f"3) 7-Day Trend — {name} — Swell / Wind / Tide + Best Days", fontweight="bold")
+
+        # SWELL = RED
+        ax3.plot(df["time"], df["swell_wave_height"], lw=2.2, color="red", label="Swell (m)")
+        ax3.set_ylabel("Swell (m)", color="red")
         ax3.grid(True, alpha=0.2)
 
         ax3b = ax3.twinx()
         ax3b.plot(df["time"], df["wind_speed_10m"], lw=1.6, ls="--", label="Wind (km/h)")
         ax3b.set_ylabel("Wind (km/h)")
 
+        ax3c = ax3.twinx()
+        ax3c.spines["right"].set_position(("axes", 1.12))
+        # TIDE = GREEN
+        ax3c.plot(df["time"], df["tide_height"], lw=1.3, ls=":", color="green", label="Tide (m)")
+        ax3c.set_ylabel("Tide (m)", color="green")
+
         surf_pts = df[df["active_x"].notna()]
         if not surf_pts.empty:
             ax3.scatter(surf_pts["time"], surf_pts["swell_wave_height"], s=20, label="Surf window")
 
-        if best_day is not None:
-            start = datetime.combine(best_day, datetime.min.time())
+        # Highlight and label top surf days
+        for i, day in enumerate(top_days):
+            start = datetime.combine(day, datetime.min.time())
             end = start + timedelta(days=1)
-            ax3.axvspan(start, end, alpha=0.12, label="Best day")
+            label = "Best surf day" if i == 0 else f"Surf day #{i+1}"
+            ax3.axvspan(start, end, alpha=0.12, label=label)
+
+            day_rows = df[df["time"].dt.date == day]
+            if not day_rows.empty:
+                peak_idx = day_rows["swell_wave_height"].fillna(-999).idxmax()
+                peak_row = day_rows.loc[peak_idx]
+                score_val = scores.loc[day]
+                ax3.annotate(
+                    f"{day.strftime('%a %d')}\nScore {score_val:.1f}",
+                    (peak_row["time"], peak_row["swell_wave_height"]),
+                    textcoords="offset points",
+                    xytext=(0, 10),
+                    ha="center",
+                    fontsize=8,
+                    fontweight="bold",
+                )
 
         ax3.xaxis.set_major_locator(mdates.DayLocator())
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
@@ -439,7 +464,8 @@ def generate_report(
 
         h1, l1 = ax3.get_legend_handles_labels()
         h2, l2 = ax3b.get_legend_handles_labels()
-        ax3.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=8)
+        h3, l3 = ax3c.get_legend_handles_labels()
+        ax3.legend(h1 + h2 + h3, l1 + l2 + l3, loc="upper left", fontsize=8)
 
         img_buf = io.BytesIO()
         fig.savefig(img_buf, format="png", dpi=150)
@@ -461,6 +487,16 @@ def generate_report(
             )
         else:
             story.append(Paragraph("<b>Next Best Day:</b> None detected in current forecast window.", styles["Heading2"]))
+
+        if top_days:
+            top_days_text = ", ".join(day.strftime("%a %d %b") for day in top_days)
+            story.append(Spacer(1, 4))
+            story.append(
+                Paragraph(
+                    f"<b>Best Surf Days This Week:</b> {top_days_text}",
+                    styles["BodyText"],
+                )
+            )
 
         cfg = _default_profile()
         if isinstance(profile, dict):
