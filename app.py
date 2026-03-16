@@ -11,43 +11,62 @@ import requests
 import streamlit as st
 
 # ============================================================
+# PAGE CONFIG FIRST
+# ============================================================
+st.set_page_config(page_title="Sentinel Access", layout="wide")
+
+# ============================================================
 # IMPORTS
 # ============================================================
+IMPORT_ERRORS: list[str] = []
+
+
+def register_import_error(name: str, e: Exception) -> None:
+    msg = f"{name} -> {type(e).__name__}: {e}"
+    IMPORT_ERRORS.append(msg)
+    print(f"IMPORT ERROR: {msg}")
+
+
 try:
     from core.location_manager import LocationManager
-except Exception:
+except Exception as e:
     LocationManager = None  # type: ignore
+    register_import_error("core.location_manager", e)
 
 try:
     from core.surf_worker import generate_report as surf_generate_report
-except Exception:
+except Exception as e:
     surf_generate_report = None  # type: ignore
+    register_import_error("core.surf_worker.generate_report", e)
 
 try:
     import core.sky_worker as sky_worker
-except Exception:
+except Exception as e:
     sky_worker = None  # type: ignore
+    register_import_error("core.sky_worker", e)
 
 try:
     import core.weather_worker as weather_worker
-except Exception:
+except Exception as e:
     weather_worker = None  # type: ignore
+    register_import_error("core.weather_worker", e)
 
 try:
     import core.trip_worker as trip_worker
-except Exception:
+except Exception as e:
     trip_worker = None  # type: ignore
+    register_import_error("core.trip_worker", e)
 
 try:
     import core.email_sender as email_sender_mod
-except Exception:
+except Exception as e:
     email_sender_mod = None  # type: ignore
+    register_import_error("core.email_sender", e)
 
 
 # ============================================================
 # STYLE
 # ============================================================
-st.set_page_config(page_title="Sentinel Access", layout="wide")
 st.markdown(
     """
     <style>
@@ -71,6 +90,12 @@ st.markdown(
 
 st.title("Sentinel Access")
 
+# Show import errors clearly at top of page
+if IMPORT_ERRORS:
+    st.error("One or more modules failed to import.")
+    for err in IMPORT_ERRORS:
+        st.caption(err)
+
 
 # ============================================================
 # SESSION STATE DEFAULTS
@@ -90,11 +115,9 @@ if "chosen_geo_label" not in st.session_state:
 if "location_names" not in st.session_state:
     st.session_state.location_names = []
 
-# NEW: UI status flags/messages
 if "is_running" not in st.session_state:
     st.session_state.is_running = False
 if "final_banner" not in st.session_state:
-    # dict like {"type": "success"|"error"|"info", "title": "...", "detail": "..."}
     st.session_state.final_banner = None
 
 
@@ -213,10 +236,6 @@ def geocode_au(name: str, state_code: str, timeout: int = 12) -> list[dict[str, 
 
 
 def maybe_add_attachment(attachments: list[str], maybe_path: Any, label: str = "") -> None:
-    """
-    Adds a PDF attachment if it exists and is large enough.
-    Logs WHY it was skipped, to make debugging easy.
-    """
     prefix = f"[{label}] " if label else ""
     if not maybe_path:
         log(f"{prefix}ATTACH: skipped (worker returned None/empty).")
@@ -249,12 +268,6 @@ def maybe_add_attachment(attachments: list[str], maybe_path: Any, label: str = "
 
 
 def call_worker_generate_report(module_or_fn: Any, *args, logger=None, **kwargs) -> Any:
-    """
-    Calls generate_report while only passing logger if the signature supports it.
-    Works for:
-      - direct function (surf_generate_report)
-      - module with generate_report attribute
-    """
     if module_or_fn is None:
         raise RuntimeError("Worker is None (import failed).")
 
@@ -339,13 +352,10 @@ if not location_names:
 def confirm_action() -> None:
     st.session_state.confirmed_ok = False
     st.session_state.confirmed_payload = None
-
-    # clear any previous banner when confirming new run
     st.session_state.final_banner = None
 
     user_name = st.session_state.get("user_name", "")
     user_email = st.session_state.get("user_email", "")
-
     report_types = st.session_state.get("report_types") or []
     main_location = st.session_state.get("main_location")
 
@@ -432,9 +442,12 @@ def generate_pay_action() -> None:
         log("ERROR: Please Confirm selections first.")
         return
 
-    # mark running + clear banner
     st.session_state.is_running = True
-    st.session_state.final_banner = {"type": "info", "title": "Running…", "detail": "Generating reports and preparing email."}
+    st.session_state.final_banner = {
+        "type": "info",
+        "title": "Running…",
+        "detail": "Generating reports and preparing email.",
+    }
 
     st.session_state.progress_log = []
     st.session_state.outputs = {}
@@ -448,7 +461,11 @@ def generate_pay_action() -> None:
     if not report_types:
         log("ERROR: No report types selected.")
         st.session_state.is_running = False
-        st.session_state.final_banner = {"type": "error", "title": "Nothing to run", "detail": "No report types were selected."}
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "Nothing to run",
+            "detail": "No report types were selected.",
+        }
         return
 
     log(payload.get("summary", "Starting run…"))
@@ -460,7 +477,11 @@ def generate_pay_action() -> None:
     if loc_payload is None:
         log("ERROR: main location not found in LocationManager.")
         st.session_state.is_running = False
-        st.session_state.final_banner = {"type": "error", "title": "Location error", "detail": "Main location was not found in LocationManager."}
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "Location error",
+            "detail": "Main location was not found in LocationManager.",
+        }
         return
 
     lat, lon, dbg = extract_lat_lon(loc_payload)
@@ -468,7 +489,11 @@ def generate_pay_action() -> None:
         log("ERROR: Selected location missing latitude/longitude in locations.json.")
         log(f"DEBUG: {dbg}")
         st.session_state.is_running = False
-        st.session_state.final_banner = {"type": "error", "title": "Location missing coordinates", "detail": f"Selected location has no lat/lon. {dbg}"}
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "Location missing coordinates",
+            "detail": f"Selected location has no lat/lon. {dbg}",
+        }
         return
 
     surf_profile = {}
@@ -482,7 +507,6 @@ def generate_pay_action() -> None:
     order = ["Surf", "Sky", "Weather", "Trip"]
     selected_in_order = [x for x in order if x in report_types]
 
-    # A visible “this is working” log line
     log("RUN START ✅ (screen may dim while Streamlit runs — that is normal)")
 
     for rt in selected_in_order:
@@ -490,7 +514,7 @@ def generate_pay_action() -> None:
         try:
             if rt == "Surf":
                 if surf_generate_report is None:
-                    raise RuntimeError("core.surf_worker.generate_report import failed.")
+                    raise RuntimeError("core.surf_worker.generate_report import failed. See import error shown above.")
                 pdf_path = call_worker_generate_report(
                     surf_generate_report,
                     main_location,
@@ -504,6 +528,8 @@ def generate_pay_action() -> None:
                 log(f"SURF {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Sky":
+                if sky_worker is None:
+                    raise RuntimeError("core.sky_worker import failed. See import error shown above.")
                 pdf_path = call_worker_generate_report(
                     sky_worker,
                     main_location,
@@ -517,6 +543,8 @@ def generate_pay_action() -> None:
                 log(f"SKY {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Weather":
+                if weather_worker is None:
+                    raise RuntimeError("core.weather_worker import failed. See import error shown above.")
                 pdf_path = call_worker_generate_report(
                     weather_worker,
                     main_location,
@@ -530,6 +558,8 @@ def generate_pay_action() -> None:
                 log(f"WEATHER {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Trip":
+                if trip_worker is None:
+                    raise RuntimeError("core.trip_worker import failed. See import error shown above.")
                 if not trip_cfg:
                     raise RuntimeError("Trip config missing. Confirm again with Trip selected.")
                 route = [trip_cfg["start"], trip_cfg["stop1"], trip_cfg["stop2"]]
@@ -561,7 +591,11 @@ def generate_pay_action() -> None:
     if not ran_any:
         log("ERROR: Nothing ran.")
         st.session_state.is_running = False
-        st.session_state.final_banner = {"type": "error", "title": "Nothing ran", "detail": "No reports executed successfully."}
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "Nothing ran",
+            "detail": "No reports executed successfully.",
+        }
         return
 
     log("Sending email…")
@@ -592,13 +626,16 @@ def generate_pay_action() -> None:
     )
     log(f"{'EMAIL OK' if ok else 'EMAIL ERROR'}: {msg}")
 
-    # FINAL BANNER
     st.session_state.is_running = False
     if ok:
         detail = f"Email sent to {user.get('email') or '(no email)'} with {len(attachments)} PDF(s) attached."
         if errors:
             detail += " (Some reports had errors—see System progress.)"
-        st.session_state.final_banner = {"type": "success", "title": "✅ ALL COMPLETE — Email sent", "detail": detail}
+        st.session_state.final_banner = {
+            "type": "success",
+            "title": "✅ ALL COMPLETE — Email sent",
+            "detail": detail,
+        }
         try:
             st.toast("✅ All complete — email sent", icon="✅")
         except Exception:
@@ -607,7 +644,11 @@ def generate_pay_action() -> None:
         detail = f"Email failed: {msg}"
         if errors:
             detail += " (Some reports also had errors—see System progress.)"
-        st.session_state.final_banner = {"type": "error", "title": "❌ Completed, but email failed", "detail": detail}
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "❌ Completed, but email failed",
+            "detail": detail,
+        }
         try:
             st.toast("❌ Completed, but email failed", icon="❌")
         except Exception:
@@ -652,7 +693,6 @@ with middle:
     with st.container():
         st.subheader("Report setup")
 
-        # --------- CLEAR, DEFINITIVE STATUS BOX ----------
         banner = st.session_state.get("final_banner")
         if banner:
             btype = banner.get("type", "info")
