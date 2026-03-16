@@ -14,7 +14,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import matplotlib.ticker as mticker
 
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.pagesizes import A4
@@ -22,11 +21,18 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 
 
+DEFAULT_TZ = "Australia/Melbourne"
+
+
 def deg_to_compass(deg):
     if deg is None or (isinstance(deg, float) and np.isnan(deg)):
         return "N/A"
-    dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    dirs = [
+        "N", "NNE", "NE", "ENE",
+        "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW",
+        "W", "WNW", "NW", "NNW"
+    ]
     idx = int((deg + 11.25) / 22.5) % 16
     return dirs[idx]
 
@@ -37,7 +43,7 @@ def _safe_get_json(url: str, timeout: int = 12):
     return r.json()
 
 
-def fetch_weather_data(lat, lon):
+def fetch_weather_data(lat, lon, logger: Callable[[str], None] = print):
     try:
         h_url = (
             "https://api.open-meteo.com/v1/forecast"
@@ -58,47 +64,81 @@ def fetch_weather_data(lat, lon):
         h_resp = _safe_get_json(h_url)
         d_resp = _safe_get_json(d_url)
 
+        tz_name = h_resp.get("timezone") or d_resp.get("timezone") or DEFAULT_TZ
+
         if "hourly" not in h_resp or "time" not in h_resp["hourly"]:
-            return None, None
+            logger("❌ Open-Meteo hourly response missing expected fields.")
+            return None, None, tz_name
+
         if "daily" not in d_resp or "time" not in d_resp["daily"]:
-            return None, None
+            logger("❌ Open-Meteo daily response missing expected fields.")
+            return None, None, tz_name
 
         h_df = pd.DataFrame(h_resp["hourly"])
         d_df = pd.DataFrame(d_resp["daily"])
 
-        h_df["time"] = pd.to_datetime(h_df["time"]).dt.tz_localize(None)
-        d_df["time"] = pd.to_datetime(d_df["time"]).dt.tz_localize(None)
+        h_df["time"] = pd.to_datetime(h_df["time"], errors="coerce")
+        d_df["time"] = pd.to_datetime(d_df["time"], errors="coerce")
 
-        h_cols = ["temperature_2m", "precipitation", "wind_speed_10m", "wind_direction_10m", "wind_gusts_10m", "weather_code"]
-        d_cols = ["temperature_2m_max", "wind_speed_10m_max", "wind_gusts_10m_max", "wind_direction_10m_dominant", "precipitation_sum", "weather_code"]
+        h_cols = [
+            "temperature_2m",
+            "precipitation",
+            "wind_speed_10m",
+            "wind_direction_10m",
+            "wind_gusts_10m",
+            "weather_code",
+        ]
+        d_cols = [
+            "temperature_2m_max",
+            "wind_speed_10m_max",
+            "wind_gusts_10m_max",
+            "wind_direction_10m_dominant",
+            "precipitation_sum",
+            "weather_code",
+        ]
 
         for col in h_cols:
-            h_df[col] = pd.to_numeric(h_df.get(col), errors="coerce")
+            if col not in h_df.columns:
+                h_df[col] = np.nan
+            h_df[col] = pd.to_numeric(h_df[col], errors="coerce")
 
         for col in d_cols:
-            d_df[col] = pd.to_numeric(d_df.get(col), errors="coerce")
+            if col not in d_df.columns:
+                d_df[col] = np.nan
+            d_df[col] = pd.to_numeric(d_df[col], errors="coerce")
 
         h_df["precipitation"] = h_df["precipitation"].fillna(0.0)
         d_df["precipitation_sum"] = d_df["precipitation_sum"].fillna(0.0)
 
-        return h_df.sort_values("time"), d_df.sort_values("time")
+        h_df = h_df.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
+        d_df = d_df.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
 
-    except Exception:
-        return None, None
+        return h_df, d_df, tz_name
+
+    except Exception as e:
+        logger(f"❌ fetch_weather_data failed: {e}")
+        return None, None, DEFAULT_TZ
 
 
 def _format_hour_axis(ax):
     ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 3, 6, 9, 12, 15, 18, 21]))
-    ax.xaxis.set_major_formatter(
-        mticker.FuncFormatter(
-            lambda x, p: mdates.DateFormatter("%I%p")(x).replace("AM", "A").replace("PM", "P").lstrip("0")
-        )
-    )
+
+    def fmt(x, pos=None):
+        dt = mdates.num2date(x)
+        label = dt.strftime("%I%p")
+        return label.replace("AM", "A").replace("PM", "P").lstrip("0")
+
+    ax.xaxis.set_major_formatter(fmt)
     ax.tick_params(axis="x", rotation=0)
 
 
-def generate_daily(h_df, location_name):
-    now_dt = datetime.now(ZoneInfo("Australia/Melbourne")).replace(tzinfo=None)
+def generate_daily(h_df, location_name, tz_name=DEFAULT_TZ):
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo(DEFAULT_TZ)
+
+    now_dt = datetime.now(tz).replace(tzinfo=None)
     day_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
 
@@ -126,7 +166,15 @@ def generate_daily(h_df, location_name):
     for _, row in day_df.iloc[::3].iterrows():
         compass = deg_to_compass(row["wind_direction_10m"])
         if pd.notna(row["wind_speed_10m"]):
-            ax_wind.annotate(compass, (row["time"], row["wind_speed_10m"]), xytext=(0, 7), textcoords="offset points", ha="center", fontsize=9, fontweight="bold")
+            ax_wind.annotate(
+                compass,
+                (row["time"], row["wind_speed_10m"]),
+                xytext=(0, 7),
+                textcoords="offset points",
+                ha="center",
+                fontsize=9,
+                fontweight="bold",
+            )
 
     ax_temp.axvline(now_dt, linestyle=":", lw=2)
 
@@ -138,9 +186,12 @@ def generate_daily(h_df, location_name):
     _format_hour_axis(ax_temp)
     ax_temp.grid(True, alpha=0.18)
 
-    ax_temp.legend([l1f, l1f, l2f, l2g, l2g, l3],
-                   ["Actual Temp", "Forecast Temp", "Actual Wind", "Forecast Wind", "Wind Gusts", "Rain"],
-                   loc="upper left", fontsize=8)
+    ax_temp.legend(
+        [l1a, l1f, l2a, l2f, l2g, l3],
+        ["Actual Temp", "Forecast Temp", "Actual Wind", "Forecast Wind", "Wind Gusts", "Rain"],
+        loc="upper left",
+        fontsize=8,
+    )
 
     buf = BytesIO()
     plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
@@ -153,7 +204,12 @@ def generate_weekly(d_df, location_name):
     fig, ax_temp = plt.subplots(figsize=(11, 5.7))
 
     if d_df is None or d_df.empty or "time" not in d_df.columns:
-        ax_temp.text(0.5, 0.5, "No weekly data returned from API.", ha="center", va="center", transform=ax_temp.transAxes)
+        ax_temp.text(
+            0.5, 0.5,
+            "No weekly data returned from API.",
+            ha="center", va="center",
+            transform=ax_temp.transAxes
+        )
         ax_temp.set_title(f"7-DAY OUTLOOK: {location_name}", fontweight="bold", fontsize=14)
         ax_temp.axis("off")
         buf = BytesIO()
@@ -174,7 +230,15 @@ def generate_weekly(d_df, location_name):
     for _, row in d_df.iterrows():
         compass = deg_to_compass(row["wind_direction_10m_dominant"])
         if pd.notna(row["wind_speed_10m_max"]):
-            ax_wind.annotate(compass, (row["time"], row["wind_speed_10m_max"]), xytext=(0, 8), textcoords="offset points", ha="center", fontsize=9, fontweight="bold")
+            ax_wind.annotate(
+                compass,
+                (row["time"], row["wind_speed_10m_max"]),
+                xytext=(0, 8),
+                textcoords="offset points",
+                ha="center",
+                fontsize=9,
+                fontweight="bold",
+            )
 
     ax_temp.set_title(f"7-DAY OUTLOOK: {location_name}", fontweight="bold", fontsize=14)
     ax_temp.set_ylabel("Max Temp (°C)", fontweight="bold")
@@ -184,7 +248,12 @@ def generate_weekly(d_df, location_name):
     ax_temp.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
     ax_temp.grid(True, alpha=0.18)
 
-    ax_temp.legend([l2, l1, l2g, l3], ["Max Temp", "Max Wind", "Max Gusts", "Rain"], loc="upper left", fontsize=8)
+    ax_temp.legend(
+        [l1, l2, l2g, l3],
+        ["Max Temp", "Max Wind", "Max Gusts", "Rain"],
+        loc="upper left",
+        fontsize=8,
+    )
 
     buf = BytesIO()
     plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
@@ -211,7 +280,7 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
 
         logger(f"Weather worker: target={target} lat={lat} lon={lon}")
 
-        h_df, d_df = fetch_weather_data(lat, lon)
+        h_df, d_df, tz_name = fetch_weather_data(lat, lon, logger=logger)
         if h_df is None or h_df.empty:
             logger(f"❌ API failure in weather_worker for {target}")
             return None
@@ -219,13 +288,18 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
         final_folder = os.path.join(output_dir, target)
         os.makedirs(final_folder, exist_ok=True)
 
-        timestamp = datetime.now(ZoneInfo("Australia/Melbourne")).strftime("%Y-%m-%d_%H%M%S")
+        timestamp = datetime.now(ZoneInfo(DEFAULT_TZ)).strftime("%Y-%m-%d_%H%M%S")
         ppath = os.path.join(final_folder, f"Weather_Report_{target}_{timestamp}.pdf")
 
-        daily_img = generate_daily(h_df, target)
+        daily_img = generate_daily(h_df, target, tz_name=tz_name)
         weekly_img = generate_weekly(d_df, target)
 
-        doc = SimpleDocTemplate(ppath, pagesize=A4, topMargin=0.6 * cm, bottomMargin=0.6 * cm)
+        doc = SimpleDocTemplate(
+            ppath,
+            pagesize=A4,
+            topMargin=0.6 * cm,
+            bottomMargin=0.6 * cm
+        )
         styles = getSampleStyleSheet()
 
         story = [
@@ -235,7 +309,10 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
             Spacer(1, 10),
             Image(weekly_img, 19 * cm, 9.2 * cm),
             Spacer(1, 6),
-            Paragraph(f"<font size=8>Generated | {datetime.now(ZoneInfo('Australia/Melbourne')).strftime('%Y-%m-%d %H:%M')}</font>", styles["Normal"]),
+            Paragraph(
+                f"<font size=8>Generated | {datetime.now(ZoneInfo(DEFAULT_TZ)).strftime('%Y-%m-%d %H:%M')}</font>",
+                styles["Normal"]
+            ),
         ]
 
         doc.build(story)
