@@ -146,6 +146,22 @@ st.markdown(
         margin-bottom: 0.8rem;
       }
 
+      .sa-user-box {
+        border: 2px solid #cfe8d6;
+        background: #f7fcf8;
+        border-radius: 12px;
+        padding: 0.85rem;
+        margin-bottom: 0.9rem;
+      }
+
+      .sa-email-note {
+        border-left: 5px solid #f59e0b;
+        background: #fff8e6;
+        padding: 0.7rem 0.8rem;
+        border-radius: 8px;
+        margin-top: 0.5rem;
+      }
+
       button[data-testid="stBaseButton-primary"] {
         background-color: #1f8f3a !important;
         border-color: #1f8f3a !important;
@@ -187,6 +203,8 @@ defaults = {
     "payment_verified": False,
     "post_payment_done": False,
     "fulfillment_started": False,
+    "pending_paid_session_id": None,
+    "last_fulfilled_session_id": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -218,6 +236,8 @@ def reset_app_state() -> None:
 def current_step_text() -> str:
     if st.session_state.get("post_payment_done"):
         return "Finished — reports generated and email step completed."
+    if st.session_state.get("pending_paid_session_id"):
+        return "Payment confirmed — Sentinel is generating reports and sending the email."
     if st.session_state.get("is_running"):
         return "Processing — please stay on this page while Sentinel finishes the next step."
     if st.session_state.get("payment_url"):
@@ -606,9 +626,29 @@ def confirm_action() -> None:
     st.session_state.payment_verified = False
     st.session_state.post_payment_done = False
     st.session_state.fulfillment_started = False
+    st.session_state.pending_paid_session_id = None
 
     user_name = st.session_state.get("user_name", "")
     user_email = st.session_state.get("user_email", "")
+
+    if not user_name.strip():
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "Name required",
+            "detail": "Please enter the user's name before confirming.",
+        }
+        log("ERROR: Name missing.")
+        return
+
+    if not looks_like_email(user_email):
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "Valid email required",
+            "detail": "Please type the email carefully, then click Confirm details.",
+        }
+        log("ERROR: Valid email missing.")
+        return
+
     report_types = st.session_state.get("report_types") or []
     main_location = st.session_state.get("main_location")
 
@@ -711,6 +751,7 @@ def generate_pay_action() -> None:
     st.session_state.payment_verified = False
     st.session_state.post_payment_done = False
     st.session_state.fulfillment_started = False
+    st.session_state.pending_paid_session_id = None
     st.session_state.final_banner = {
         "type": "info",
         "title": "Preparing payment…",
@@ -813,7 +854,10 @@ def build_payload_from_stripe_metadata(session_id: str) -> tuple[dict[str, Any] 
 
 
 def fulfill_after_payment(session_id: str) -> None:
-    if st.session_state.get("post_payment_done") or st.session_state.get("fulfillment_started"):
+    if st.session_state.get("last_fulfilled_session_id") == session_id:
+        return
+
+    if st.session_state.get("fulfillment_started"):
         return
 
     st.session_state.fulfillment_started = True
@@ -832,6 +876,8 @@ def fulfill_after_payment(session_id: str) -> None:
                 "detail": f"Stripe payment was successful, but Sentinel could not rebuild the order details. {rebuilt_msg}",
             }
             log(f"FULFILLMENT ERROR: {rebuilt_msg}")
+            st.session_state.pending_paid_session_id = None
+            st.session_state.fulfillment_started = False
             return
 
         payload = rebuilt_payload
@@ -851,6 +897,8 @@ def fulfill_after_payment(session_id: str) -> None:
             "detail": "Please contact support or run the order again.",
         }
         log("FULFILLMENT ERROR: Missing reports or location after payment.")
+        st.session_state.pending_paid_session_id = None
+        st.session_state.fulfillment_started = False
         return
 
     st.session_state.is_running = True
@@ -877,6 +925,8 @@ def fulfill_after_payment(session_id: str) -> None:
             "detail": "Main location was not found in LocationManager.",
         }
         log("FULFILLMENT ERROR: location not found in LocationManager.")
+        st.session_state.pending_paid_session_id = None
+        st.session_state.fulfillment_started = False
         return
 
     lat, lon, dbg = extract_lat_lon(loc_payload)
@@ -888,6 +938,8 @@ def fulfill_after_payment(session_id: str) -> None:
             "detail": f"Selected location has no lat/lon. {dbg}",
         }
         log(f"FULFILLMENT ERROR: bad location payload. {dbg}")
+        st.session_state.pending_paid_session_id = None
+        st.session_state.fulfillment_started = False
         return
 
     surf_profile = {}
@@ -974,6 +1026,8 @@ def fulfill_after_payment(session_id: str) -> None:
             "detail": "See System progress for the exact worker error.",
         }
         log("FULFILLMENT ERROR: Nothing ran.")
+        st.session_state.pending_paid_session_id = None
+        st.session_state.fulfillment_started = False
         return
 
     log("Sending email…")
@@ -1007,6 +1061,9 @@ def fulfill_after_payment(session_id: str) -> None:
     st.session_state.is_running = False
     st.session_state.post_payment_done = True
     st.session_state.payment_url = None
+    st.session_state.pending_paid_session_id = None
+    st.session_state.last_fulfilled_session_id = session_id
+    st.session_state.fulfillment_started = False
 
     if ok:
         detail = f"Email sent to {user.get('email') or '(no email)'} with {len(attachments)} PDF(s) attached."
@@ -1067,17 +1124,17 @@ if cancelled_flag == "1":
         "detail": "You cancelled the Stripe checkout. You can still click Pay now again if your payment link is available.",
     }
 
-if paid_flag == "1" and session_id_from_query and not st.session_state.get("post_payment_done"):
+if paid_flag == "1" and session_id_from_query:
     paid_ok, paid_msg = verify_session_paid(str(session_id_from_query))
     if paid_ok:
         st.session_state.payment_verified = True
         st.session_state.payment_session_id = str(session_id_from_query)
+        st.session_state.pending_paid_session_id = str(session_id_from_query)
         st.session_state.final_banner = {
             "type": "info",
             "title": "✅ Payment confirmed",
             "detail": f"{paid_msg} Sentinel is now generating your reports.",
         }
-        fulfill_after_payment(str(session_id_from_query))
     else:
         st.session_state.final_banner = {
             "type": "error",
@@ -1085,6 +1142,16 @@ if paid_flag == "1" and session_id_from_query and not st.session_state.get("post
             "detail": paid_msg,
         }
 
+# ============================================================
+# RUN PENDING FULFILLMENT
+# ============================================================
+pending_session_id = st.session_state.get("pending_paid_session_id")
+if (
+    pending_session_id
+    and st.session_state.get("last_fulfilled_session_id") != pending_session_id
+    and not st.session_state.get("is_running")
+):
+    fulfill_after_payment(str(pending_session_id))
 
 # ============================================================
 # HELPERS FOR UI
@@ -1104,21 +1171,22 @@ with left:
     confirmed_ok = st.session_state.get("confirmed_ok", False)
     payment_url = st.session_state.get("payment_url")
     post_done = st.session_state.get("post_payment_done", False)
+    pending_paid = st.session_state.get("pending_paid_session_id")
 
-    cls1 = "sa-step-box sa-step-done" if confirmed_ok or payment_url or post_done else "sa-step-box sa-step-current"
-    cls2 = "sa-step-box sa-step-done" if payment_url or post_done else "sa-step-box sa-step-current" if confirmed_ok else "sa-step-box"
-    cls3 = "sa-step-box sa-step-done" if post_done else "sa-step-box sa-step-current" if payment_url else "sa-step-box"
-    cls4 = "sa-step-box sa-step-done" if post_done else "sa-step-box"
+    cls1 = "sa-step-box sa-step-done" if confirmed_ok or payment_url or post_done or pending_paid else "sa-step-box sa-step-current"
+    cls2 = "sa-step-box sa-step-done" if payment_url or post_done or pending_paid else "sa-step-box sa-step-current" if confirmed_ok else "sa-step-box"
+    cls3 = "sa-step-box sa-step-done" if post_done else "sa-step-box sa-step-current" if payment_url or pending_paid else "sa-step-box"
+    cls4 = "sa-step-box sa-step-done" if post_done else "sa-step-box sa-step-current" if pending_paid else "sa-step-box"
 
     st.markdown(
         f"""
         <div class="{cls1}">
           <b>Step 1 — Choose reports and location</b><br>
-          Enter your details, pick reports, and choose the location.
+          Pick reports and choose the location.
         </div>
         <div class="{cls2}">
           <b>Step 2 — Confirm details</b><br>
-          Click <b>Confirm details</b> to lock in the order.
+          Enter name and email, then click <b>Confirm details</b>.
         </div>
         <div class="{cls3}">
           <b>Step 3 — Pay in Stripe</b><br>
@@ -1141,11 +1209,6 @@ with left:
         """,
         unsafe_allow_html=True,
     )
-
-    st.divider()
-    st.subheader("User details")
-    st.text_input("Name", key="user_name", disabled=st.session_state.is_running)
-    st.text_input("Email", key="user_email", disabled=st.session_state.is_running)
 
     st.divider()
     st.subheader("System checks")
@@ -1183,7 +1246,7 @@ with middle:
 
     if payment_url:
         render_pay_button(payment_url)
-    elif st.session_state.is_running:
+    elif st.session_state.is_running or st.session_state.get("pending_paid_session_id"):
         st.info("Sentinel is working on the next step…")
 
     st.multiselect(
@@ -1258,6 +1321,36 @@ with middle:
     render_progress_box(height=320)
 
 with right:
+    st.markdown(
+        """
+        <div class="sa-user-box">
+          <div style="font-weight:800; font-size:1.05rem; margin-bottom:0.4rem;">
+            User details
+          </div>
+          <div style="font-size:0.95rem; margin-bottom:0.4rem;">
+            Enter the name and email carefully before clicking <b>Confirm details</b>.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.text_input("Name", key="user_name", disabled=st.session_state.is_running)
+    st.text_input("Email", key="user_email", disabled=st.session_state.is_running)
+
+    if not looks_like_email(st.session_state.get("user_email", "")):
+        st.markdown(
+            """
+            <div class="sa-email-note">
+              <b>Email check:</b> Please type a valid email address, then click <b>Confirm details</b> to lock it in before payment.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.success("Email looks valid. Next step: click Confirm details.")
+
+    st.divider()
     st.subheader("Examples")
     tab_surf, tab_sky, tab_weather, tab_trip = st.tabs(["Surf", "Sky", "Weather", "Trip"])
 
