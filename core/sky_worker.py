@@ -116,8 +116,34 @@ def calculate_night_score(df: pd.DataFrame) -> pd.Series:
     return (cloud_component + vis_component + rain_component + wind_component).clip(lower=0, upper=100)
 
 
-def _score_to_10(series: pd.Series) -> pd.Series:
-    return (series / 10.0).clip(lower=0, upper=10)
+def _moon_phase_info(dt_obj) -> dict[str, str]:
+    """
+    Returns moon phase icon + name using a simple local lunar cycle approximation.
+    Good for reporting/visual use.
+    """
+    if isinstance(dt_obj, pd.Timestamp):
+        dt_obj = dt_obj.to_pydatetime()
+
+    # Reference new moon near 2000-01-06 18:14 UTC
+    known_new_moon = datetime(2000, 1, 6, 18, 14)
+    synodic_month = 29.53058867
+
+    days_since = (dt_obj - known_new_moon).total_seconds() / 86400.0
+    lunar_age = days_since % synodic_month
+
+    phase_index = int((lunar_age / synodic_month) * 8 + 0.5) % 8
+
+    phases = [
+        {"icon": "🌑", "name": "New Moon"},
+        {"icon": "🌒", "name": "Waxing Crescent"},
+        {"icon": "🌓", "name": "First Quarter"},
+        {"icon": "🌔", "name": "Waxing Gibbous"},
+        {"icon": "🌕", "name": "Full Moon"},
+        {"icon": "🌖", "name": "Waning Gibbous"},
+        {"icon": "🌗", "name": "Last Quarter"},
+        {"icon": "🌘", "name": "Waning Crescent"},
+    ]
+    return phases[phase_index]
 
 
 def _day_window_for_date(day_date):
@@ -151,7 +177,17 @@ def _daily_window_scores(df: pd.DataFrame):
         day_score = float(day_df["day_score"].mean()) if not day_df.empty else np.nan
         night_score = float(night_df["night_score"].mean()) if not night_df.empty else np.nan
 
-        rows.append({"date": d, "day_score": day_score, "night_score": night_score})
+        moon = _moon_phase_info(datetime.combine(d, dtime(21, 0)))
+
+        rows.append(
+            {
+                "date": d,
+                "day_score": day_score,
+                "night_score": night_score,
+                "moon_icon": moon["icon"],
+                "moon_name": moon["name"],
+            }
+        )
 
     return pd.DataFrame(rows)
 
@@ -163,15 +199,18 @@ def _plot_condition_panel(
     score_col: str,
     best_label: str,
     score_color: str,
+    moon_text: str | None = None,
 ):
-    ax.set_title(title, fontweight="bold", fontsize=10)
+    if moon_text:
+        ax.set_title(f"{title}   |   Moon: {moon_text}", fontweight="bold", fontsize=10)
+    else:
+        ax.set_title(title, fontweight="bold", fontsize=10)
 
     if dfx.empty:
         ax.text(0.5, 0.5, "No data available.", ha="center", va="center", transform=ax.transAxes)
         ax.set_axis_off()
         return
 
-    # Main photography score line
     ax.plot(dfx["time"], dfx[score_col], lw=2.0, color=score_color, label="Photography Score")
     ax.set_ylabel("Score / 100", fontweight="bold", fontsize=8, color=score_color)
     ax.set_ylim(0, 100)
@@ -180,7 +219,6 @@ def _plot_condition_panel(
     ax.tick_params(axis="x", labelsize=8)
     ax.tick_params(axis="y", labelsize=8, colors=score_color)
 
-    # Cloud cover line
     ax2 = ax.twinx()
     ax2.plot(dfx["time"], dfx["cloud_cover"], lw=1.8, ls="--", color="red", label="Cloud Cover %")
     ax2.set_ylabel("Cloud Cover %", fontweight="bold", fontsize=8, color="red")
@@ -250,6 +288,9 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
     best_day_df = _subset_between(df, best_day_start, best_day_end)
     best_night_df = _subset_between(df, best_night_start, best_night_end)
 
+    today_moon = _moon_phase_info(datetime.combine(today_date, dtime(21, 0)))
+    best_night_moon = _moon_phase_info(datetime.combine(next_best_day_date, dtime(21, 0)))
+
     fig, axes = plt.subplots(6, 1, figsize=(9.0, 14.2))
     fig.subplots_adjust(top=0.97, bottom=0.06, left=0.08, right=0.90, hspace=0.55)
 
@@ -260,6 +301,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         "day_score",
         "Best Daytime Window",
         score_color="blue",
+        moon_text=None,
     )
     _plot_condition_panel(
         axes[1],
@@ -268,6 +310,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         "night_score",
         "Best Night Window",
         score_color="green",
+        moon_text=f"{today_moon['icon']} {today_moon['name']}",
     )
 
     _plot_condition_panel(
@@ -277,6 +320,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         "day_score",
         "Best Daytime Window",
         score_color="blue",
+        moon_text=None,
     )
     _plot_condition_panel(
         axes[3],
@@ -285,6 +329,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         "night_score",
         "Best Night Window",
         score_color="green",
+        moon_text=f"{best_night_moon['icon']} {best_night_moon['name']}",
     )
 
     ax5 = axes[4]
@@ -342,6 +387,18 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
             fontsize=7,
             fontweight="bold",
         )
+
+    for i, row in daily_scores.iterrows():
+        if pd.notna(row["night_score"]):
+            ax6.annotate(
+                row["moon_icon"],
+                (i, float(row["night_score"])),
+                textcoords="offset points",
+                xytext=(0, 16),
+                ha="center",
+                fontsize=11,
+            )
+
     ax6.set_xticks(x_positions)
     ax6.set_xticklabels(daily_scores["date"].astype(str), fontsize=8)
     ax6.set_ylabel("Score / 100", fontsize=8, fontweight="bold", color="green")
@@ -381,13 +438,22 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
 
         best_day_text = "N/A"
         best_night_text = "N/A"
+        tonight_moon_text = "N/A"
+
         if not daily_scores.empty:
             if daily_scores["day_score"].notna().any():
                 best_day_row = daily_scores.sort_values("day_score", ascending=False).iloc[0]
                 best_day_text = f"{best_day_row['date']} ({best_day_row['day_score'] / 10.0:.1f}/10)"
             if daily_scores["night_score"].notna().any():
                 best_night_row = daily_scores.sort_values("night_score", ascending=False).iloc[0]
-                best_night_text = f"{best_night_row['date']} ({best_night_row['night_score'] / 10.0:.1f}/10)"
+                best_night_text = (
+                    f"{best_night_row['date']} "
+                    f"({best_night_row['night_score'] / 10.0:.1f}/10, "
+                    f"{best_night_row['moon_icon']} {best_night_row['moon_name']})"
+                )
+
+        tonight_moon = _moon_phase_info(datetime.combine(datetime.now().date(), dtime(21, 0)))
+        tonight_moon_text = f"{tonight_moon['icon']} {tonight_moon['name']}"
 
         os.makedirs(output_dir, exist_ok=True)
         filename = f"Sky_{target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
@@ -402,6 +468,11 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
             Paragraph(
                 f"<b>Best Day Photography:</b> {best_day_text} &nbsp;&nbsp; "
                 f"<b>Best Night Photography:</b> {best_night_text}",
+                styles["Normal"],
+            ),
+            Spacer(1, 0.08 * cm),
+            Paragraph(
+                f"<b>Tonight's Moon:</b> {tonight_moon_text}",
                 styles["Normal"],
             ),
             Spacer(1, 0.18 * cm),
