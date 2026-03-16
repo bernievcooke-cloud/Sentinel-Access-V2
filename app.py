@@ -324,8 +324,10 @@ if "lm" not in st.session_state:
     st.session_state.lm = LocationManager()
 lm = st.session_state.lm
 
-if not hasattr(lm, "locations") or not hasattr(lm, "get"):
-    st.error("LocationManager missing expected methods: locations() and get().")
+required_methods = ["locations", "get", "add_or_update"]
+missing = [m for m in required_methods if not hasattr(lm, m)]
+if missing:
+    st.error(f"LocationManager missing expected methods: {', '.join(missing)}")
     st.stop()
 
 
@@ -359,8 +361,37 @@ def confirm_action() -> None:
     report_types = st.session_state.get("report_types") or []
     main_location = st.session_state.get("main_location")
 
+    if not str(user_name).strip():
+        log("ERROR: Please enter your name.")
+        return
+
+    if not str(user_email).strip():
+        log("ERROR: Please enter your email.")
+        return
+
+    if "@" not in user_email or "." not in user_email:
+        log("ERROR: Please enter a valid email address.")
+        return
+
+    if not report_types:
+        log("ERROR: Please select at least one report.")
+        return
+
+    if not main_location:
+        log("ERROR: Please select a location.")
+        return
+
     trip_payload = None
     if "Trip" in report_types:
+        trip_stops = [
+            st.session_state.get("trip_start"),
+            st.session_state.get("trip_stop1"),
+            st.session_state.get("trip_stop2"),
+        ]
+        if not all(trip_stops):
+            log("ERROR: Please complete all Trip locations.")
+            return
+
         trip_payload = {
             "start": st.session_state.get("trip_start"),
             "stop1": st.session_state.get("trip_stop1"),
@@ -524,7 +555,8 @@ def generate_pay_action() -> None:
                 )
                 st.session_state.outputs["Surf"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Surf")
-                ran_any = True
+                if pdf_path:
+                    ran_any = True
                 log(f"SURF {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Sky":
@@ -539,7 +571,8 @@ def generate_pay_action() -> None:
                 )
                 st.session_state.outputs["Sky"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Sky")
-                ran_any = True
+                if pdf_path:
+                    ran_any = True
                 log(f"SKY {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Weather":
@@ -554,7 +587,8 @@ def generate_pay_action() -> None:
                 )
                 st.session_state.outputs["Weather"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Weather")
-                ran_any = True
+                if pdf_path:
+                    ran_any = True
                 log(f"WEATHER {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Trip":
@@ -579,7 +613,8 @@ def generate_pay_action() -> None:
                 )
                 st.session_state.outputs["Trip"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Trip")
-                ran_any = True
+                if pdf_path:
+                    ran_any = True
                 log(f"TRIP {'complete' if pdf_path else 'failed'}.")
 
         except Exception as e:
@@ -595,6 +630,16 @@ def generate_pay_action() -> None:
             "type": "error",
             "title": "Nothing ran",
             "detail": "No reports executed successfully.",
+        }
+        return
+
+    if not attachments:
+        log("ERROR: No valid PDF attachments were created, so email was not sent.")
+        st.session_state.is_running = False
+        st.session_state.final_banner = {
+            "type": "error",
+            "title": "❌ No PDFs created",
+            "detail": "No valid report PDFs were generated, so the email was not sent.",
         }
         return
 
@@ -674,7 +719,7 @@ with left:
             2) Select report(s) + location(s)  
             3) Add a new location (standalone) if needed  
             4) Confirm selections  
-            5) Generate & Pay (emails all selected report PDFs)  
+            5) Generate & Send (emails all selected report PDFs)  
             """
         )
         st.divider()
@@ -800,7 +845,7 @@ with middle:
         )
         render_progress_box(height=320)
         st.button(
-            "💳 Generate & Pay",
+            "📨 Generate & Send",
             type="primary",
             use_container_width=True,
             on_click=generate_pay_action,
