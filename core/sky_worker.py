@@ -42,16 +42,8 @@ def _extract_lat_lon(data: Any) -> tuple[Optional[float], Optional[float]]:
     if not isinstance(data, dict):
         return None, None
 
-    lat = (
-        data.get("latitude")
-        if data.get("latitude") is not None
-        else data.get("lat")
-    )
-    lon = (
-        data.get("longitude")
-        if data.get("longitude") is not None
-        else data.get("lon")
-    )
+    lat = data.get("latitude") if data.get("latitude") is not None else data.get("lat")
+    lon = data.get("longitude") if data.get("longitude") is not None else data.get("lon")
 
     return _to_float(lat), _to_float(lon)
 
@@ -63,9 +55,6 @@ def _safe_get_json(url: str, timeout: int = 15) -> dict:
 
 
 def fetch_sky_data(lat: float, lon: float, logger: Callable[[str], None] = print):
-    """
-    Fetch real hourly forecast data for day + night photography conditions.
-    """
     try:
         url = (
             "https://api.open-meteo.com/v1/forecast"
@@ -127,6 +116,10 @@ def calculate_night_score(df: pd.DataFrame) -> pd.Series:
     return (cloud_component + vis_component + rain_component + wind_component).clip(lower=0, upper=100)
 
 
+def _score_to_10(series: pd.Series) -> pd.Series:
+    return (series / 10.0).clip(lower=0, upper=10)
+
+
 def _day_window_for_date(day_date):
     start = datetime.combine(day_date, dtime(6, 0))
     end = datetime.combine(day_date, dtime(18, 0))
@@ -158,18 +151,19 @@ def _daily_window_scores(df: pd.DataFrame):
         day_score = float(day_df["day_score"].mean()) if not day_df.empty else np.nan
         night_score = float(night_df["night_score"].mean()) if not night_df.empty else np.nan
 
-        rows.append(
-            {
-                "date": d,
-                "day_score": day_score,
-                "night_score": night_score,
-            }
-        )
+        rows.append({"date": d, "day_score": day_score, "night_score": night_score})
 
     return pd.DataFrame(rows)
 
 
-def _plot_condition_panel(ax, dfx: pd.DataFrame, title: str, score_col: str, best_label: str):
+def _plot_condition_panel(
+    ax,
+    dfx: pd.DataFrame,
+    title: str,
+    score_col: str,
+    best_label: str,
+    score_color: str,
+):
     ax.set_title(title, fontweight="bold", fontsize=10)
 
     if dfx.empty:
@@ -177,22 +171,27 @@ def _plot_condition_panel(ax, dfx: pd.DataFrame, title: str, score_col: str, bes
         ax.set_axis_off()
         return
 
-    ax.plot(dfx["time"], dfx[score_col], lw=2.0, color="green", label="Photography Score")
-    ax.set_ylabel("Score / 100", fontweight="bold", fontsize=8)
+    # Main photography score line
+    ax.plot(dfx["time"], dfx[score_col], lw=2.0, color=score_color, label="Photography Score")
+    ax.set_ylabel("Score / 100", fontweight="bold", fontsize=8, color=score_color)
     ax.set_ylim(0, 100)
+    ax.set_yticks([0, 25, 50, 75, 100])
     ax.grid(True, alpha=0.18)
     ax.tick_params(axis="x", labelsize=8)
-    ax.tick_params(axis="y", labelsize=8)
+    ax.tick_params(axis="y", labelsize=8, colors=score_color)
 
+    # Cloud cover line
     ax2 = ax.twinx()
-    ax2.plot(dfx["time"], dfx["cloud_cover"], lw=1.6, ls="--", color="red", label="Cloud Cover %")
-    ax2.set_ylabel("Cloud %", fontweight="bold", fontsize=8, color="red")
+    ax2.plot(dfx["time"], dfx["cloud_cover"], lw=1.8, ls="--", color="red", label="Cloud Cover %")
+    ax2.set_ylabel("Cloud Cover %", fontweight="bold", fontsize=8, color="red")
     ax2.set_ylim(0, 100)
+    ax2.set_yticks([0, 25, 50, 75, 100])
     ax2.tick_params(axis="y", labelsize=8, colors="red")
 
     best_idx = dfx[score_col].idxmax()
     best_time = dfx.loc[best_idx, "time"]
     best_score = float(dfx.loc[best_idx, score_col])
+    best_score_10 = best_score / 10.0
 
     ax.scatter(
         [best_time],
@@ -205,7 +204,7 @@ def _plot_condition_panel(ax, dfx: pd.DataFrame, title: str, score_col: str, bes
         label=best_label,
     )
     ax.annotate(
-        f"{best_time.strftime('%H:%M')}\n{best_score:.0f}/100",
+        f"{best_time.strftime('%H:%M')}\n{best_score_10:.1f}/10",
         (best_time, best_score),
         textcoords="offset points",
         xytext=(0, 8),
@@ -260,6 +259,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         f"1A) TODAY — DAY PHOTOGRAPHY (6AM–6PM) — {target}",
         "day_score",
         "Best Daytime Window",
+        score_color="blue",
     )
     _plot_condition_panel(
         axes[1],
@@ -267,6 +267,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         f"1B) TODAY — NIGHT PHOTOGRAPHY (6PM–6AM) — {target}",
         "night_score",
         "Best Night Window",
+        score_color="green",
     )
 
     _plot_condition_panel(
@@ -275,6 +276,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         f"2A) NEXT BEST DAY — DAY PHOTOGRAPHY ({next_best_day_date})",
         "day_score",
         "Best Daytime Window",
+        score_color="blue",
     )
     _plot_condition_panel(
         axes[3],
@@ -282,6 +284,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         f"2B) NEXT BEST DAY — NIGHT PHOTOGRAPHY ({next_best_day_date})",
         "night_score",
         "Best Night Window",
+        score_color="green",
     )
 
     ax5 = axes[4]
@@ -290,7 +293,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
     ax5.bar(
         x_positions,
         daily_scores["day_score"].fillna(0),
-        color="green",
+        color="blue",
         alpha=0.75,
         width=0.55,
         label="Day Score",
@@ -299,19 +302,29 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         best_row = daily_scores.sort_values("day_score", ascending=False).iloc[0]
         best_i = daily_scores.index[daily_scores["date"] == best_row["date"]][0]
         ax5.scatter(best_i, best_row["day_score"], marker="x", s=110, color="red", linewidths=2.0, zorder=6)
+        ax5.annotate(
+            f"{best_row['day_score'] / 10.0:.1f}/10",
+            (best_i, best_row["day_score"]),
+            textcoords="offset points",
+            xytext=(0, 8),
+            ha="center",
+            fontsize=7,
+            fontweight="bold",
+        )
     ax5.set_xticks(x_positions)
     ax5.set_xticklabels(daily_scores["date"].astype(str), fontsize=8)
-    ax5.set_ylabel("Score / 100", fontsize=8, fontweight="bold")
+    ax5.set_ylabel("Score / 100", fontsize=8, fontweight="bold", color="blue")
     ax5.set_ylim(0, 100)
+    ax5.set_yticks([0, 25, 50, 75, 100])
     ax5.grid(True, axis="y", alpha=0.18)
-    ax5.tick_params(axis="y", labelsize=8)
+    ax5.tick_params(axis="y", labelsize=8, colors="blue")
 
     ax6 = axes[5]
     ax6.set_title("3B) WEEKLY NIGHT PHOTOGRAPHY TREND (6PM–6AM)", fontweight="bold", fontsize=10)
     ax6.bar(
         x_positions,
         daily_scores["night_score"].fillna(0),
-        color="#2e7d32",
+        color="green",
         alpha=0.75,
         width=0.55,
         label="Night Score",
@@ -320,12 +333,22 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
         best_row_n = daily_scores.sort_values("night_score", ascending=False).iloc[0]
         best_i_n = daily_scores.index[daily_scores["date"] == best_row_n["date"]][0]
         ax6.scatter(best_i_n, best_row_n["night_score"], marker="x", s=110, color="red", linewidths=2.0, zorder=6)
+        ax6.annotate(
+            f"{best_row_n['night_score'] / 10.0:.1f}/10",
+            (best_i_n, best_row_n["night_score"]),
+            textcoords="offset points",
+            xytext=(0, 8),
+            ha="center",
+            fontsize=7,
+            fontweight="bold",
+        )
     ax6.set_xticks(x_positions)
     ax6.set_xticklabels(daily_scores["date"].astype(str), fontsize=8)
-    ax6.set_ylabel("Score / 100", fontsize=8, fontweight="bold")
+    ax6.set_ylabel("Score / 100", fontsize=8, fontweight="bold", color="green")
     ax6.set_ylim(0, 100)
+    ax6.set_yticks([0, 25, 50, 75, 100])
     ax6.grid(True, axis="y", alpha=0.18)
-    ax6.tick_params(axis="y", labelsize=8)
+    ax6.tick_params(axis="y", labelsize=8, colors="green")
 
     buf = BytesIO()
     plt.savefig(buf, format="png", dpi=140, bbox_inches="tight")
@@ -361,10 +384,10 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
         if not daily_scores.empty:
             if daily_scores["day_score"].notna().any():
                 best_day_row = daily_scores.sort_values("day_score", ascending=False).iloc[0]
-                best_day_text = f"{best_day_row['date']} ({best_day_row['day_score']:.0f}/100)"
+                best_day_text = f"{best_day_row['date']} ({best_day_row['day_score'] / 10.0:.1f}/10)"
             if daily_scores["night_score"].notna().any():
                 best_night_row = daily_scores.sort_values("night_score", ascending=False).iloc[0]
-                best_night_text = f"{best_night_row['date']} ({best_night_row['night_score']:.0f}/100)"
+                best_night_text = f"{best_night_row['date']} ({best_night_row['night_score'] / 10.0:.1f}/10)"
 
         os.makedirs(output_dir, exist_ok=True)
         filename = f"Sky_{target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
