@@ -15,7 +15,31 @@ import streamlit as st
 # ============================================================
 # PAGE CONFIG MUST BE FIRST STREAMLIT COMMAND
 # ============================================================
-st.set_page_config(page_title="Sentinel Access", layout="wide")
+st.set_page_config(page_title="Oz Trip Planner", layout="wide")
+...
+col_title, col_link = st.columns([0.72, 0.28])
+with col_title:
+    st.title("Oz Trip Planner")
+with col_link:
+    st.markdown(
+        """
+        <div style="text-align:right; padding-top: 1.1rem;">
+          <a href="https://www.oztripplanner.net" target="_blank"
+             style="
+                display:inline-block;
+                text-decoration:none;
+                padding:0.6rem 0.9rem;
+                border-radius:10px;
+                border:1px solid #1f8f3a;
+                color:#1f8f3a;
+                font-weight:700;
+             ">
+             Return to webpage
+          </a>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # ============================================================
 # OPTIONAL IMPORTS
