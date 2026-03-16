@@ -202,7 +202,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Sentinel Access")
+st.title("Surf, Weather, Photography, Trip Planner")
 
 if IMPORT_ERRORS:
     st.error("One or more modules failed to import.")
