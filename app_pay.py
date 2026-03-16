@@ -179,6 +179,7 @@ st.markdown(
 )
 
 st.title("Sentinel Access")
+st.warning("APP VERSION: app_pay return-flow debug build")
 
 if IMPORT_ERRORS:
     st.error("One or more modules failed to import.")
@@ -262,7 +263,6 @@ def render_pay_button(url: str) -> None:
         unsafe_allow_html=True,
     )
     st.link_button("💳 PAY NOW IN STRIPE", url, use_container_width=True)
-
 
 # ============================================================
 # GENERAL HELPERS
@@ -444,7 +444,6 @@ def send_email_via_sender(
     except Exception as e:
         return False, str(e)
 
-
 # ============================================================
 # STRIPE HELPERS
 # ============================================================
@@ -581,7 +580,6 @@ def retrieve_session_metadata(session_id: str) -> tuple[dict[str, str], str]:
         return {str(k): str(v) for k, v in dict(md).items()}, "OK"
     except Exception as e:
         return {}, f"Stripe metadata retrieve error: {e}"
-
 
 # ============================================================
 # LOCATION MANAGER
@@ -1088,7 +1086,6 @@ def fulfill_after_payment(session_id: str) -> None:
     st.session_state.confirmed_ok = False
     st.session_state.confirmed_payload = None
 
-
 # ============================================================
 # HANDLE STRIPE RETURN
 # ============================================================
@@ -1117,6 +1114,11 @@ cancelled_flag = _qp_get("cancelled")
 paid_flag = _qp_get("paid")
 session_id_from_query = _qp_get("session_id")
 
+log(f"RETURN CHECK: paid={paid_flag}, session_id={session_id_from_query}")
+
+if paid_flag or session_id_from_query:
+    st.info(f"Return detected: paid={paid_flag}, session_id={session_id_from_query}")
+
 if cancelled_flag == "1":
     st.session_state.final_banner = {
         "type": "error",
@@ -1135,12 +1137,14 @@ if paid_flag == "1" and session_id_from_query:
             "title": "✅ Payment confirmed",
             "detail": f"{paid_msg} Sentinel is now generating your reports.",
         }
+        log(f"PAID VERIFIED: {session_id_from_query}")
     else:
         st.session_state.final_banner = {
             "type": "error",
             "title": "Payment not confirmed",
             "detail": paid_msg,
         }
+        log(f"PAID VERIFY FAILED: {paid_msg}")
 
 # ============================================================
 # RUN PENDING FULFILLMENT
@@ -1151,6 +1155,8 @@ if (
     and st.session_state.get("last_fulfilled_session_id") != pending_session_id
     and not st.session_state.get("is_running")
 ):
+    st.info(f"Starting fulfillment for session: {pending_session_id}")
+    log(f"STARTING FULFILLMENT: {pending_session_id}")
     fulfill_after_payment(str(pending_session_id))
 
 # ============================================================
@@ -1158,7 +1164,6 @@ if (
 # ============================================================
 def _worker_status_line(name: str, obj: Any) -> str:
     return f"{name}: {'OK' if obj is not None else 'Import failed'}"
-
 
 # ============================================================
 # 3 PANELS
