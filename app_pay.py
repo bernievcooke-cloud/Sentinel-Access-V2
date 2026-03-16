@@ -179,7 +179,6 @@ st.markdown(
 )
 
 st.title("Sentinel Access")
-st.warning("APP VERSION: app_pay return-flow debug build")
 
 if IMPORT_ERRORS:
     st.error("One or more modules failed to import.")
@@ -1116,9 +1115,6 @@ session_id_from_query = _qp_get("session_id")
 
 log(f"RETURN CHECK: paid={paid_flag}, session_id={session_id_from_query}")
 
-if paid_flag or session_id_from_query:
-    st.info(f"Return detected: paid={paid_flag}, session_id={session_id_from_query}")
-
 if cancelled_flag == "1":
     st.session_state.final_banner = {
         "type": "error",
@@ -1155,7 +1151,6 @@ if (
     and st.session_state.get("last_fulfilled_session_id") != pending_session_id
     and not st.session_state.get("is_running")
 ):
-    st.info(f"Starting fulfillment for session: {pending_session_id}")
     log(f"STARTING FULFILLMENT: {pending_session_id}")
     fulfill_after_payment(str(pending_session_id))
 
