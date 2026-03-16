@@ -205,7 +205,7 @@ def _get_day_window(df: pd.DataFrame, day_date):
 def _format_hour_axis(ax):
     ax.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 3, 6, 9, 12, 15, 18, 21]))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    ax.tick_params(axis="x", rotation=0)
+    ax.tick_params(axis="x", rotation=0, labelsize=8)
 
 
 def _shade_surf_windows(ax, dfx: pd.DataFrame):
@@ -235,10 +235,10 @@ def _annotate_wind_dirs(ax_wind, dfx: pd.DataFrame, step=3):
             ax_wind.annotate(
                 compass,
                 (row["time"], ws),
-                xytext=(0, 7),
+                xytext=(0, 6),
                 textcoords="offset points",
                 ha="center",
-                fontsize=8,
+                fontsize=7,
                 fontweight="bold",
             )
 
@@ -260,39 +260,39 @@ def _best_point_for_day(dfx: pd.DataFrame) -> Optional[pd.Series]:
     tide = work["tide_height"].fillna(0)
     work["point_score"] += 0.6 * (tide >= 1.1).astype(float)
 
-    if work.empty:
-        return None
-
     idx = work["point_score"].idxmax()
     return work.loc[idx]
 
 
 def _plot_day_panel(ax, dfx: pd.DataFrame, title: str, mark_best: bool = False):
-    ax.set_title(title, fontweight="bold")
+    ax.set_title(title, fontweight="bold", fontsize=10)
 
     if dfx.empty:
         ax.text(0.5, 0.5, "No data available for this day window.", ha="center", va="center", transform=ax.transAxes)
         return
 
-    ax.plot(dfx["time"], dfx["swell_wave_height"], lw=2.4, color="red", label="Swell (m)")
-    ax.set_ylabel("Swell (m)", color="red")
+    ax.plot(dfx["time"], dfx["swell_wave_height"], lw=2.2, color="red", label="Swell (m)")
+    ax.set_ylabel("Swell (m)", color="red", fontsize=8)
     ax.grid(True, alpha=0.2)
     _format_hour_axis(ax)
+    ax.tick_params(axis="y", labelsize=8)
 
     ax_wind = ax.twinx()
-    ax_wind.plot(dfx["time"], dfx["wind_speed_10m"], lw=1.8, ls="--", label="Wind (km/h)")
-    ax_wind.set_ylabel("Wind (km/h)")
+    ax_wind.plot(dfx["time"], dfx["wind_speed_10m"], lw=1.5, ls="--", label="Wind (km/h)")
+    ax_wind.set_ylabel("Wind (km/h)", fontsize=8)
+    ax_wind.tick_params(axis="y", labelsize=8)
 
     ax_tide = ax.twinx()
-    ax_tide.spines["right"].set_position(("axes", 1.12))
-    ax_tide.plot(dfx["time"], dfx["tide_height"], lw=1.4, ls=":", color="green", label="Tide (m)")
-    ax_tide.set_ylabel("Tide (m)", color="green")
+    ax_tide.spines["right"].set_position(("axes", 1.10))
+    ax_tide.plot(dfx["time"], dfx["tide_height"], lw=1.3, ls=":", color="green", label="Tide (m)")
+    ax_tide.set_ylabel("Tide (m)", color="green", fontsize=8)
+    ax_tide.tick_params(axis="y", labelsize=8)
 
     _shade_surf_windows(ax, dfx)
 
     good = dfx[dfx["active_x"].notna()]
     if not good.empty:
-        ax.scatter(good["time"], good["swell_wave_height"], s=30, label="Surf window")
+        ax.scatter(good["time"], good["swell_wave_height"], s=24, label="Surf window")
 
         step = max(1, len(good) // 6)
         for _, r in good.iloc[::step].iterrows():
@@ -300,9 +300,9 @@ def _plot_day_panel(ax, dfx: pd.DataFrame, title: str, mark_best: bool = False):
                 str(r["active_x"]),
                 (r["time"], r["swell_wave_height"]),
                 textcoords="offset points",
-                xytext=(0, 8),
+                xytext=(0, 7),
                 ha="center",
-                fontsize=8,
+                fontsize=7,
             )
 
     if mark_best:
@@ -313,8 +313,8 @@ def _plot_day_panel(ax, dfx: pd.DataFrame, title: str, mark_best: bool = False):
                 [best_point["swell_wave_height"]],
                 color="red",
                 marker="x",
-                s=130,
-                linewidths=2.2,
+                s=110,
+                linewidths=2.0,
                 zorder=6,
                 label="Best point",
             )
@@ -322,9 +322,9 @@ def _plot_day_panel(ax, dfx: pd.DataFrame, title: str, mark_best: bool = False):
                 "Best",
                 (best_point["time"], best_point["swell_wave_height"]),
                 textcoords="offset points",
-                xytext=(0, 10),
+                xytext=(0, 8),
                 ha="center",
-                fontsize=8,
+                fontsize=7,
                 fontweight="bold",
                 color="red",
             )
@@ -334,7 +334,7 @@ def _plot_day_panel(ax, dfx: pd.DataFrame, title: str, mark_best: bool = False):
     h1, l1 = ax.get_legend_handles_labels()
     h2, l2 = ax_wind.get_legend_handles_labels()
     h3, l3 = ax_tide.get_legend_handles_labels()
-    ax.legend(h1 + h2 + h3, l1 + l2 + l3, loc="upper left", fontsize=8)
+    ax.legend(h1 + h2 + h3, l1 + l2 + l3, loc="upper left", fontsize=7)
 
 
 # -------------------------------------------------
@@ -417,8 +417,9 @@ def generate_report(
         best_day_rating = _score_to_rating(float(scores.iloc[0]), best_score_value) if not scores.empty else 0
         top_day_ratings = {day: _score_to_rating(float(scores.loc[day]), best_score_value) for day in top_days} if top_days else {}
 
-        fig = plt.figure(figsize=(9.3, 12.4))
-        gs = fig.add_gridspec(3, 1, height_ratios=[1.25, 1.25, 1.15], hspace=0.38)
+        # Tightened figure to stay on one PDF page
+        fig = plt.figure(figsize=(8.8, 10.9))
+        gs = fig.add_gridspec(3, 1, height_ratios=[1.15, 1.15, 1.0], hspace=0.28)
 
         ax1 = fig.add_subplot(gs[0, 0])
         ax2 = fig.add_subplot(gs[1, 0])
@@ -429,7 +430,7 @@ def generate_report(
         _plot_day_panel(ax1, today_df, f"1) Today — {name} — Swell / Wind / Tide + Surf Windows", mark_best=False)
 
         if best_day is None:
-            ax2.set_title("2) Next Best Surf Day — No best day detected", fontweight="bold")
+            ax2.set_title("2) Next Best Surf Day — No best day detected", fontweight="bold", fontsize=10)
             ax2.text(
                 0.5, 0.5, "No surf windows detected in the 7-day forecast window.",
                 ha="center", va="center", transform=ax2.transAxes
@@ -443,23 +444,26 @@ def generate_report(
                 mark_best=True,
             )
 
-        ax3.set_title(f"3) 7-Day Trend — {name} — Swell / Wind / Tide + Best Days", fontweight="bold")
-        ax3.plot(df["time"], df["swell_wave_height"], lw=2.2, color="red", label="Swell (m)")
-        ax3.set_ylabel("Swell (m)", color="red")
+        ax3.set_title(f"3) 7-Day Trend — {name} — Swell / Wind / Tide + Best Days", fontweight="bold", fontsize=10)
+        ax3.plot(df["time"], df["swell_wave_height"], lw=2.0, color="red", label="Swell (m)")
+        ax3.set_ylabel("Swell (m)", color="red", fontsize=8)
         ax3.grid(True, alpha=0.2)
+        ax3.tick_params(axis="y", labelsize=8)
 
         ax3b = ax3.twinx()
-        ax3b.plot(df["time"], df["wind_speed_10m"], lw=1.6, ls="--", label="Wind (km/h)")
-        ax3b.set_ylabel("Wind (km/h)")
+        ax3b.plot(df["time"], df["wind_speed_10m"], lw=1.5, ls="--", label="Wind (km/h)")
+        ax3b.set_ylabel("Wind (km/h)", fontsize=8)
+        ax3b.tick_params(axis="y", labelsize=8)
 
         ax3c = ax3.twinx()
-        ax3c.spines["right"].set_position(("axes", 1.12))
-        ax3c.plot(df["time"], df["tide_height"], lw=1.3, ls=":", color="green", label="Tide (m)")
-        ax3c.set_ylabel("Tide (m)", color="green")
+        ax3c.spines["right"].set_position(("axes", 1.10))
+        ax3c.plot(df["time"], df["tide_height"], lw=1.2, ls=":", color="green", label="Tide (m)")
+        ax3c.set_ylabel("Tide (m)", color="green", fontsize=8)
+        ax3c.tick_params(axis="y", labelsize=8)
 
         surf_pts = df[df["active_x"].notna()]
         if not surf_pts.empty:
-            ax3.scatter(surf_pts["time"], surf_pts["swell_wave_height"], s=20, label="Surf window")
+            ax3.scatter(surf_pts["time"], surf_pts["swell_wave_height"], s=18, label="Surf window")
 
         for i, day in enumerate(top_days):
             start = datetime.combine(day, datetime.min.time())
@@ -476,8 +480,8 @@ def generate_report(
                         [best_point["swell_wave_height"]],
                         color="red",
                         marker="x",
-                        s=130,
-                        linewidths=2.2,
+                        s=110,
+                        linewidths=2.0,
                         zorder=6,
                     )
 
@@ -489,22 +493,22 @@ def generate_report(
                     f"{day.strftime('%a %d')}\n{rating}/10",
                     (peak_row["time"], peak_row["swell_wave_height"]),
                     textcoords="offset points",
-                    xytext=(0, 10),
+                    xytext=(0, 8),
                     ha="center",
-                    fontsize=8,
+                    fontsize=7,
                     fontweight="bold",
                 )
 
         ax3.xaxis.set_major_locator(mdates.DayLocator())
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
-        ax3.tick_params(axis="x", rotation=0)
+        ax3.tick_params(axis="x", rotation=0, labelsize=8)
 
         ax3.text(
             0.01,
-            -0.24,
-            "Surf day rating is a comparative score out of 10 for this forecast run only, based on surf-window hours, swell fit, and wind.",
+            -0.18,
+            "Surf day rating is a comparative score out of 10 for this forecast run only.",
             transform=ax3.transAxes,
-            fontsize=8,
+            fontsize=7,
             ha="left",
             va="top",
         )
@@ -512,10 +516,10 @@ def generate_report(
         h1, l1 = ax3.get_legend_handles_labels()
         h2, l2 = ax3b.get_legend_handles_labels()
         h3, l3 = ax3c.get_legend_handles_labels()
-        ax3.legend(h1 + h2 + h3, l1 + l2 + l3, loc="upper left", fontsize=8)
+        ax3.legend(h1 + h2 + h3, l1 + l2 + l3, loc="upper left", fontsize=7)
 
         img_buf = io.BytesIO()
-        fig.savefig(img_buf, format="png", dpi=150, bbox_inches="tight")
+        fig.savefig(img_buf, format="png", dpi=145, bbox_inches="tight")
         plt.close(fig)
         img_buf.seek(0)
 
@@ -523,7 +527,7 @@ def generate_report(
         pdf_path = os.path.join(output_dir, filename)
 
         styles = getSampleStyleSheet()
-        story = [Paragraph(f"SURF REPORT: {name}", styles["Title"]), Spacer(1, 6)]
+        story = [Paragraph(f"SURF REPORT: {name}", styles["Title"]), Spacer(1, 4)]
 
         if best_day is not None:
             story.append(
@@ -537,7 +541,7 @@ def generate_report(
 
         if top_days:
             top_days_text = ", ".join(f"{day.strftime('%a %d %b')} ({top_day_ratings.get(day, 0)}/10)" for day in top_days)
-            story.append(Spacer(1, 4))
+            story.append(Spacer(1, 2))
             story.append(
                 Paragraph(
                     f"<b>Best Surf Days This Week:</b> {top_days_text}",
@@ -548,7 +552,7 @@ def generate_report(
         cfg = _default_profile()
         if isinstance(profile, dict):
             cfg.update(profile)
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 3))
         story.append(
             Paragraph(
                 f"<b>Surf profile:</b> offshore={cfg.get('offshore_dir_ranges')} "
@@ -559,10 +563,15 @@ def generate_report(
             )
         )
 
-        story.append(Spacer(1, 10))
-        story.append(RLImage(img_buf, width=18.0 * cm, height=23.0 * cm))
+        story.append(Spacer(1, 5))
+        story.append(RLImage(img_buf, width=18.0 * cm, height=20.6 * cm))
 
-        doc = SimpleDocTemplate(pdf_path, pagesize=A4, topMargin=0.7 * cm, bottomMargin=0.7 * cm)
+        doc = SimpleDocTemplate(
+            pdf_path,
+            pagesize=A4,
+            topMargin=0.45 * cm,
+            bottomMargin=0.45 * cm,
+        )
         doc.build(story)
 
         if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 1000:
