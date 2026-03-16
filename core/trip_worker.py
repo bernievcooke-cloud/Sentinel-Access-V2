@@ -77,7 +77,7 @@ def _make_charts(
         color=green_main,
         edgecolor=edge_col,
         linewidth=0.7,
-        width=0.55,
+        width=0.42,
     )
     ax1.set_title("Distance per Leg", fontsize=12, fontweight="bold", pad=10)
     ax1.bar_label(bars1, padding=3, fmt="%.1f km", fontsize=8)
@@ -95,7 +95,7 @@ def _make_charts(
         color=green_soft,
         edgecolor=edge_col,
         linewidth=0.7,
-        width=0.55,
+        width=0.42,
     )
     ax2.set_title(
         f"Fuel Cost per Leg ({fuel_type} @ ${price_per_l:.3f}/L, {fuel_l_per_100km:.1f} L/100km)",
@@ -191,6 +191,9 @@ def generate_report(
         filename = f"Trip_{target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         ppath = os.path.join(output_dir, filename)
 
+        # Full route title using all route locations
+        route_title = "_".join(str(x) for x in route)
+
         styles = getSampleStyleSheet()
         doc = SimpleDocTemplate(
             ppath,
@@ -230,7 +233,7 @@ def generate_report(
         )
 
         story = [
-            Paragraph(f"<b>TRIP REPORT: {target}</b>", styles["Title"]),
+            Paragraph(f"<b>TRIP REPORT: {route_title}</b>", styles["Title"]),
             Spacer(1, 0.20 * cm),
             Paragraph("<b>Trip Summary</b>", styles["Heading2"]),
             Spacer(1, 0.12 * cm),
