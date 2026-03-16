@@ -117,14 +117,9 @@ def calculate_night_score(df: pd.DataFrame) -> pd.Series:
 
 
 def _moon_phase_info(dt_obj) -> dict[str, str]:
-    """
-    Returns moon phase icon + name using a simple local lunar cycle approximation.
-    Good for reporting/visual use.
-    """
     if isinstance(dt_obj, pd.Timestamp):
         dt_obj = dt_obj.to_pydatetime()
 
-    # Reference new moon near 2000-01-06 18:14 UTC
     known_new_moon = datetime(2000, 1, 6, 18, 14)
     synodic_month = 29.53058867
 
@@ -134,14 +129,14 @@ def _moon_phase_info(dt_obj) -> dict[str, str]:
     phase_index = int((lunar_age / synodic_month) * 8 + 0.5) % 8
 
     phases = [
-        {"icon": "🌑", "name": "New Moon"},
-        {"icon": "🌒", "name": "Waxing Crescent"},
-        {"icon": "🌓", "name": "First Quarter"},
-        {"icon": "🌔", "name": "Waxing Gibbous"},
-        {"icon": "🌕", "name": "Full Moon"},
-        {"icon": "🌖", "name": "Waning Gibbous"},
-        {"icon": "🌗", "name": "Last Quarter"},
-        {"icon": "🌘", "name": "Waning Crescent"},
+        {"icon": "NM", "name": "New Moon"},
+        {"icon": "WC", "name": "Waxing Crescent"},
+        {"icon": "FQ", "name": "First Quarter"},
+        {"icon": "WG", "name": "Waxing Gibbous"},
+        {"icon": "FM", "name": "Full Moon"},
+        {"icon": "WNG", "name": "Waning Gibbous"},
+        {"icon": "LQ", "name": "Last Quarter"},
+        {"icon": "WNC", "name": "Waning Crescent"},
     ]
     return phases[phase_index]
 
@@ -396,7 +391,8 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
                 textcoords="offset points",
                 xytext=(0, 16),
                 ha="center",
-                fontsize=11,
+                fontsize=8,
+                fontweight="bold",
             )
 
     ax6.set_xticks(x_positions)
