@@ -28,9 +28,11 @@ except Exception:
 STRIPE_IMPORT_ERROR = None
 try:
     import stripe
+    print(f"STRIPE IMPORT OK: version={getattr(stripe, '__version__', 'unknown')}")
 except Exception as e:
     stripe = None  # type: ignore
-    STRIPE_IMPORT_ERROR = str(e)
+    STRIPE_IMPORT_ERROR = f"{type(e).__name__}: {e}"
+    print(f"STRIPE IMPORT FAILED: {STRIPE_IMPORT_ERROR}")
 
 # ============================================================
 # ENV / STRIPE CONFIG
@@ -161,7 +163,6 @@ if "payment_verified" not in st.session_state:
     st.session_state.payment_verified = False
 if "post_payment_done" not in st.session_state:
     st.session_state.post_payment_done = False
-
 
 # ============================================================
 # LOGGING / UI HELPERS
