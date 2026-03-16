@@ -109,16 +109,12 @@ def _in_dir_range(deg: float, start: float, end: float) -> bool:
     end = float(end) % 360
     if start <= end:
         return start <= deg <= end
-    return deg >= start or deg <= end  # wrap-around
+    return deg >= start or deg <= end
 
 
 def _default_profile() -> dict:
-    """
-    Baseline surf profile so ANY new location can generate a report.
-    This is intentionally generic and conservative.
-    """
     return {
-        "offshore_dir_ranges": [[290, 70]],  # W -> N -> E (wrap)
+        "offshore_dir_ranges": [[290, 70]],
         "max_wind_kmh": 28,
         "swell_min": 0.9,
         "swell_max": 3.8,
@@ -127,12 +123,6 @@ def _default_profile() -> dict:
 
 
 def is_surf_window(row: pd.Series, target: str, profile: dict) -> Optional[str]:
-    """
-    Returns target name if conditions look like a surf window for THIS location,
-    based on the per-location profile.
-
-    IMPORTANT: It never returns other break names. It returns target or None.
-    """
     wdir = row.get("wind_direction_10m")
     ws = row.get("wind_speed_10m")
     swell = row.get("swell_wave_height")
@@ -181,12 +171,6 @@ def _safe_hourly_df(url: str, timeout: int = 15) -> pd.DataFrame:
 
 
 def _build_surf_score(df: pd.DataFrame) -> pd.Series:
-    """
-    Score each day from the weekly dataset.
-    - +3 per hour where active_x triggers
-    - swell preference near 1.6m
-    - penalize strong winds > 25 km/h
-    """
     dfx = df.copy()
     dfx["date"] = dfx["time"].dt.date
     dfx["score"] = 0.0
@@ -200,6 +184,13 @@ def _build_surf_score(df: pd.DataFrame) -> pd.Series:
     dfx["score"] -= 0.06 * (ws - 25).clip(lower=0)
 
     return dfx.groupby("date")["score"].sum().sort_values(ascending=False)
+
+
+def _score_to_rating(score: float, best_score: float) -> int:
+    if best_score <= 0:
+        return 0
+    rating = round((score / best_score) * 10)
+    return max(0, min(10, int(rating)))
 
 
 def _get_day_window(df: pd.DataFrame, day_date):
@@ -252,14 +243,37 @@ def _annotate_wind_dirs(ax_wind, dfx: pd.DataFrame, step=3):
             )
 
 
-def _plot_day_panel(ax, dfx: pd.DataFrame, title: str):
+def _best_point_for_day(dfx: pd.DataFrame) -> Optional[pd.Series]:
+    if dfx.empty:
+        return None
+
+    work = dfx.copy()
+    work["point_score"] = 0.0
+    work.loc[work["active_x"].notna(), "point_score"] += 5.0
+
+    swell = work["swell_wave_height"].fillna(0)
+    work["point_score"] += 2.0 * (1.0 - (swell - 1.6).abs() / 2.5).clip(lower=0)
+
+    wind = work["wind_speed_10m"].fillna(0)
+    work["point_score"] -= 0.08 * (wind - 20).clip(lower=0)
+
+    tide = work["tide_height"].fillna(0)
+    work["point_score"] += 0.6 * (tide >= 1.1).astype(float)
+
+    if work.empty:
+        return None
+
+    idx = work["point_score"].idxmax()
+    return work.loc[idx]
+
+
+def _plot_day_panel(ax, dfx: pd.DataFrame, title: str, mark_best: bool = False):
     ax.set_title(title, fontweight="bold")
 
     if dfx.empty:
         ax.text(0.5, 0.5, "No data available for this day window.", ha="center", va="center", transform=ax.transAxes)
         return
 
-    # SWELL = RED
     ax.plot(dfx["time"], dfx["swell_wave_height"], lw=2.4, color="red", label="Swell (m)")
     ax.set_ylabel("Swell (m)", color="red")
     ax.grid(True, alpha=0.2)
@@ -271,7 +285,6 @@ def _plot_day_panel(ax, dfx: pd.DataFrame, title: str):
 
     ax_tide = ax.twinx()
     ax_tide.spines["right"].set_position(("axes", 1.12))
-    # TIDE = GREEN
     ax_tide.plot(dfx["time"], dfx["tide_height"], lw=1.4, ls=":", color="green", label="Tide (m)")
     ax_tide.set_ylabel("Tide (m)", color="green")
 
@@ -292,6 +305,30 @@ def _plot_day_panel(ax, dfx: pd.DataFrame, title: str):
                 fontsize=8,
             )
 
+    if mark_best:
+        best_point = _best_point_for_day(dfx)
+        if best_point is not None and pd.notna(best_point["swell_wave_height"]):
+            ax.scatter(
+                [best_point["time"]],
+                [best_point["swell_wave_height"]],
+                color="red",
+                marker="x",
+                s=130,
+                linewidths=2.2,
+                zorder=6,
+                label="Best point",
+            )
+            ax.annotate(
+                "Best",
+                (best_point["time"], best_point["swell_wave_height"]),
+                textcoords="offset points",
+                xytext=(0, 10),
+                ha="center",
+                fontsize=8,
+                fontweight="bold",
+                color="red",
+            )
+
     _annotate_wind_dirs(ax_wind, dfx, step=3)
 
     h1, l1 = ax.get_legend_handles_labels()
@@ -309,25 +346,9 @@ def generate_report(
     output_dir: str | None = None,
     logger: Callable[[str], None] = print,
     *,
-    # app-compatible kwargs
     location_name: str | None = None,
     coords: Any = None,
 ) -> str | None:
-    """
-    Backwards compatible + app compatible.
-
-    Legacy:
-      generate_report(target, data, output_dir, logger=...)
-
-      where data expected:
-        data[0] = lat
-        data[1] = lon
-        data[2] = optional surf_profile dict (from locations.json)
-
-    App-style:
-      generate_report(location_name="...", coords=[lat, lon], output_dir="...", logger=...)
-      generate_report(location_name="...", coords={"lat":..., "lon":...}, output_dir="...", logger=...)
-    """
     if not callable(logger):
         logger = print
 
@@ -382,11 +403,9 @@ def generate_report(
             logger("CRITICAL: merged dataframe empty.")
             return None
 
-        # Synthetic tide (consistent, not real tide)
         tide_cycle = 12.4
         df["tide_height"] = 1.35 + 0.85 * np.sin(np.arange(len(df)) * (2 * np.pi / tide_cycle))
 
-        # profile-driven surf windows
         df["active_x"] = df.apply(lambda r: is_surf_window(r, name, profile), axis=1)
 
         scores = _build_surf_score(df)
@@ -394,8 +413,12 @@ def generate_report(
         best_break = name if best_day is not None else "None"
         top_days = list(scores.head(3).index) if not scores.empty else []
 
-        fig = plt.figure(figsize=(9.3, 12.1))
-        gs = fig.add_gridspec(3, 1, height_ratios=[1.25, 1.25, 1.1], hspace=0.35)
+        best_score_value = float(scores.iloc[0]) if not scores.empty else 0.0
+        best_day_rating = _score_to_rating(float(scores.iloc[0]), best_score_value) if not scores.empty else 0
+        top_day_ratings = {day: _score_to_rating(float(scores.loc[day]), best_score_value) for day in top_days} if top_days else {}
+
+        fig = plt.figure(figsize=(9.3, 12.4))
+        gs = fig.add_gridspec(3, 1, height_ratios=[1.25, 1.25, 1.15], hspace=0.38)
 
         ax1 = fig.add_subplot(gs[0, 0])
         ax2 = fig.add_subplot(gs[1, 0])
@@ -403,7 +426,7 @@ def generate_report(
 
         today_date = datetime.now().date()
         today_df = _get_day_window(df, today_date)
-        _plot_day_panel(ax1, today_df, f"1) Today — {name} — Swell / Wind / Tide + Surf Windows")
+        _plot_day_panel(ax1, today_df, f"1) Today — {name} — Swell / Wind / Tide + Surf Windows", mark_best=False)
 
         if best_day is None:
             ax2.set_title("2) Next Best Surf Day — No best day detected", fontweight="bold")
@@ -413,11 +436,14 @@ def generate_report(
             )
         else:
             best_df = _get_day_window(df, best_day)
-            _plot_day_panel(ax2, best_df, f"2) Next Best Surf Day: {best_day} ({name})")
+            _plot_day_panel(
+                ax2,
+                best_df,
+                f"2) Next Best Surf Day: {best_day} ({name}) — {best_day_rating}/10",
+                mark_best=True,
+            )
 
         ax3.set_title(f"3) 7-Day Trend — {name} — Swell / Wind / Tide + Best Days", fontweight="bold")
-
-        # SWELL = RED
         ax3.plot(df["time"], df["swell_wave_height"], lw=2.2, color="red", label="Swell (m)")
         ax3.set_ylabel("Swell (m)", color="red")
         ax3.grid(True, alpha=0.2)
@@ -428,7 +454,6 @@ def generate_report(
 
         ax3c = ax3.twinx()
         ax3c.spines["right"].set_position(("axes", 1.12))
-        # TIDE = GREEN
         ax3c.plot(df["time"], df["tide_height"], lw=1.3, ls=":", color="green", label="Tide (m)")
         ax3c.set_ylabel("Tide (m)", color="green")
 
@@ -436,20 +461,32 @@ def generate_report(
         if not surf_pts.empty:
             ax3.scatter(surf_pts["time"], surf_pts["swell_wave_height"], s=20, label="Surf window")
 
-        # Highlight and label top surf days
         for i, day in enumerate(top_days):
             start = datetime.combine(day, datetime.min.time())
             end = start + timedelta(days=1)
             label = "Best surf day" if i == 0 else f"Surf day #{i+1}"
             ax3.axvspan(start, end, alpha=0.12, label=label)
 
-            day_rows = df[df["time"].dt.date == day]
+            day_rows = df[df["time"].dt.date == day].copy()
             if not day_rows.empty:
+                best_point = _best_point_for_day(day_rows)
+                if best_point is not None and pd.notna(best_point["swell_wave_height"]):
+                    ax3.scatter(
+                        [best_point["time"]],
+                        [best_point["swell_wave_height"]],
+                        color="red",
+                        marker="x",
+                        s=130,
+                        linewidths=2.2,
+                        zorder=6,
+                    )
+
                 peak_idx = day_rows["swell_wave_height"].fillna(-999).idxmax()
                 peak_row = day_rows.loc[peak_idx]
-                score_val = scores.loc[day]
+                rating = top_day_ratings.get(day, 0)
+
                 ax3.annotate(
-                    f"{day.strftime('%a %d')}\nScore {score_val:.1f}",
+                    f"{day.strftime('%a %d')}\n{rating}/10",
                     (peak_row["time"], peak_row["swell_wave_height"]),
                     textcoords="offset points",
                     xytext=(0, 10),
@@ -462,13 +499,23 @@ def generate_report(
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
         ax3.tick_params(axis="x", rotation=0)
 
+        ax3.text(
+            0.01,
+            -0.24,
+            "Surf day rating is a comparative score out of 10 for this forecast run only, based on surf-window hours, swell fit, and wind.",
+            transform=ax3.transAxes,
+            fontsize=8,
+            ha="left",
+            va="top",
+        )
+
         h1, l1 = ax3.get_legend_handles_labels()
         h2, l2 = ax3b.get_legend_handles_labels()
         h3, l3 = ax3c.get_legend_handles_labels()
         ax3.legend(h1 + h2 + h3, l1 + l2 + l3, loc="upper left", fontsize=8)
 
         img_buf = io.BytesIO()
-        fig.savefig(img_buf, format="png", dpi=150)
+        fig.savefig(img_buf, format="png", dpi=150, bbox_inches="tight")
         plt.close(fig)
         img_buf.seek(0)
 
@@ -481,7 +528,7 @@ def generate_report(
         if best_day is not None:
             story.append(
                 Paragraph(
-                    f"<b>Next Best Day:</b> {best_day} &nbsp;&nbsp; <b>Location:</b> {best_break}",
+                    f"<b>Next Best Day:</b> {best_day} &nbsp;&nbsp; <b>Location:</b> {best_break} &nbsp;&nbsp; <b>Rating:</b> {best_day_rating}/10",
                     styles["Heading2"],
                 )
             )
@@ -489,7 +536,7 @@ def generate_report(
             story.append(Paragraph("<b>Next Best Day:</b> None detected in current forecast window.", styles["Heading2"]))
 
         if top_days:
-            top_days_text = ", ".join(day.strftime("%a %d %b") for day in top_days)
+            top_days_text = ", ".join(f"{day.strftime('%a %d %b')} ({top_day_ratings.get(day, 0)}/10)" for day in top_days)
             story.append(Spacer(1, 4))
             story.append(
                 Paragraph(
