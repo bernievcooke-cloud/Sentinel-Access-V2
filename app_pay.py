@@ -71,8 +71,8 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip()
 CURRENCY = os.getenv("CURRENCY", "aud").strip().lower() or "aud"
 
-PRICE_PER_REPORT_CENTS = int(os.getenv("PRICE_PER_REPORT_CENTS", "1500"))
-BUNDLE_PRICE_CENTS = int(os.getenv("BUNDLE_PRICE_CENTS", "5000"))
+PRICE_PER_REPORT_CENTS = int(os.getenv("PRICE_PER_REPORT_CENTS", "250"))
+BUNDLE_PRICE_CENTS = int(os.getenv("BUNDLE_PRICE_CENTS", "800"))
 
 # ============================================================
 # IMPORTS WITH VISIBLE ERROR CAPTURE
@@ -252,8 +252,19 @@ def render_progress_box(height: int = 320) -> None:
 
 
 def reset_app_state() -> None:
+    # Clear all Streamlit session state, including user inputs, logs, banners, payment state, outputs
     for k in list(st.session_state.keys()):
         del st.session_state[k]
+
+    # Clear URL query params so paid/cancelled/session_id do not rebuild the page state
+    try:
+        if hasattr(st, "query_params"):
+            st.query_params.clear()
+        else:
+            st.experimental_set_query_params()
+    except Exception:
+        pass
+
     st.rerun()
 
 
