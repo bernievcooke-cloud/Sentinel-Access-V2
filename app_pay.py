@@ -135,26 +135,7 @@ st.markdown(
         background: #fff8e6;
         border-radius: 14px;
         padding: 1rem;
-        margin: 0.6rem 0 1rem 0;
-      }
-
-      .sa-pay-btn {
-        display: inline-block;
-        width: 100%;
-        text-align: center;
-        text-decoration: none;
-        background: #f59e0b;
-        color: white !important;
-        padding: 0.95rem 1rem;
-        border-radius: 12px;
-        font-weight: 800;
-        font-size: 1.05rem;
-        box-sizing: border-box;
-      }
-
-      .sa-pay-btn:hover {
-        background: #d97706;
-        color: white !important;
+        margin: 0.6rem 0 0.7rem 0;
       }
 
       .sa-next-box {
@@ -183,9 +164,6 @@ st.markdown(
 
 st.title("Sentinel Access")
 
-# ============================================================
-# SHOW IMPORT ERRORS CLEARLY
-# ============================================================
 if IMPORT_ERRORS:
     st.error("One or more modules failed to import.")
     for err in IMPORT_ERRORS:
@@ -194,37 +172,25 @@ if IMPORT_ERRORS:
 # ============================================================
 # SESSION STATE DEFAULTS
 # ============================================================
-if "progress_log" not in st.session_state:
-    st.session_state.progress_log = []
-if "confirmed_ok" not in st.session_state:
-    st.session_state.confirmed_ok = False
-if "confirmed_payload" not in st.session_state:
-    st.session_state.confirmed_payload = None
-if "outputs" not in st.session_state:
-    st.session_state.outputs = {}
-if "new_location_candidates" not in st.session_state:
-    st.session_state.new_location_candidates = []
-if "chosen_geo_label" not in st.session_state:
-    st.session_state.chosen_geo_label = None
-if "location_names" not in st.session_state:
-    st.session_state.location_names = []
-
-if "is_running" not in st.session_state:
-    st.session_state.is_running = False
-if "final_banner" not in st.session_state:
-    st.session_state.final_banner = None
-
-if "payment_url" not in st.session_state:
-    st.session_state.payment_url = None
-if "payment_session_id" not in st.session_state:
-    st.session_state.payment_session_id = None
-if "payment_verified" not in st.session_state:
-    st.session_state.payment_verified = False
-if "post_payment_done" not in st.session_state:
-    st.session_state.post_payment_done = False
-if "fulfillment_started" not in st.session_state:
-    st.session_state.fulfillment_started = False
-
+defaults = {
+    "progress_log": [],
+    "confirmed_ok": False,
+    "confirmed_payload": None,
+    "outputs": {},
+    "new_location_candidates": [],
+    "chosen_geo_label": None,
+    "location_names": [],
+    "is_running": False,
+    "final_banner": None,
+    "payment_url": None,
+    "payment_session_id": None,
+    "payment_verified": False,
+    "post_payment_done": False,
+    "fulfillment_started": False,
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ============================================================
 # LOGGING / UI HELPERS
@@ -263,7 +229,7 @@ def current_step_text() -> str:
 
 def render_pay_button(url: str) -> None:
     st.markdown(
-        f"""
+        """
         <div class="sa-pay-box">
           <div style="font-weight:800; font-size:1.05rem; margin-bottom:0.45rem;">
             Payment link ready
@@ -271,11 +237,11 @@ def render_pay_button(url: str) -> None:
           <div style="margin-bottom:0.8rem;">
             Click the button below to securely pay in Stripe, then return here automatically.
           </div>
-          <a class="sa-pay-btn" href="{url}" target="_self">💳 PAY NOW IN STRIPE</a>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    st.link_button("💳 PAY NOW IN STRIPE", url, use_container_width=True)
 
 
 # ============================================================
@@ -624,11 +590,9 @@ def _refresh_locations() -> None:
 if not st.session_state.location_names:
     st.session_state.location_names = list(lm.locations())
 
-location_names = st.session_state.location_names
-if not location_names:
+if not st.session_state.location_names:
     st.error("0 locations loaded. Check config/locations.json.")
     st.stop()
-
 
 # ============================================================
 # ACTIONS
@@ -802,6 +766,7 @@ def generate_pay_action() -> None:
             "detail": f"Next step: click Pay now below. Total: {cents_to_str(amount_cents)}",
         }
         log(f"Stripe session created: {session_id}")
+        log(f"Stripe URL: {session_url}")
 
     except Exception as e:
         st.session_state.is_running = False
@@ -848,10 +813,7 @@ def build_payload_from_stripe_metadata(session_id: str) -> tuple[dict[str, Any] 
 
 
 def fulfill_after_payment(session_id: str) -> None:
-    if st.session_state.get("post_payment_done"):
-        return
-
-    if st.session_state.get("fulfillment_started"):
+    if st.session_state.get("post_payment_done") or st.session_state.get("fulfillment_started"):
         return
 
     st.session_state.fulfillment_started = True
@@ -948,11 +910,7 @@ def fulfill_after_payment(session_id: str) -> None:
                 if surf_generate_report is None:
                     raise RuntimeError("core.surf_worker.generate_report import failed. See import errors above.")
                 pdf_path = call_worker_generate_report(
-                    surf_generate_report,
-                    main_location,
-                    [lat, lon, surf_profile],
-                    output_dir,
-                    logger=log,
+                    surf_generate_report, main_location, [lat, lon, surf_profile], output_dir, logger=log
                 )
                 st.session_state.outputs["Surf"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Surf")
@@ -963,11 +921,7 @@ def fulfill_after_payment(session_id: str) -> None:
                 if sky_worker is None:
                     raise RuntimeError("core.sky_worker import failed. See import errors above.")
                 pdf_path = call_worker_generate_report(
-                    sky_worker,
-                    main_location,
-                    [lat, lon],
-                    output_dir,
-                    logger=log,
+                    sky_worker, main_location, [lat, lon], output_dir, logger=log
                 )
                 st.session_state.outputs["Sky"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Sky")
@@ -978,11 +932,7 @@ def fulfill_after_payment(session_id: str) -> None:
                 if weather_worker is None:
                     raise RuntimeError("core.weather_worker import failed. See import errors above.")
                 pdf_path = call_worker_generate_report(
-                    weather_worker,
-                    main_location,
-                    [lat, lon],
-                    output_dir,
-                    logger=log,
+                    weather_worker, main_location, [lat, lon], output_dir, logger=log
                 )
                 st.session_state.outputs["Weather"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Weather")
@@ -1003,11 +953,7 @@ def fulfill_after_payment(session_id: str) -> None:
                 }
                 trip_name = f"{route[0]}_{route[-1]}"
                 pdf_path = call_worker_generate_report(
-                    trip_worker,
-                    trip_name,
-                    trip_data,
-                    output_dir,
-                    logger=log,
+                    trip_worker, trip_name, trip_data, output_dir, logger=log
                 )
                 st.session_state.outputs["Trip"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Trip")
@@ -1071,10 +1017,6 @@ def fulfill_after_payment(session_id: str) -> None:
             "title": "✅ All complete — email sent",
             "detail": detail,
         }
-        try:
-            st.toast("✅ All complete — email sent", icon="✅")
-        except Exception:
-            pass
     else:
         detail = f"Payment was confirmed, but email sending failed: {msg}"
         if errors:
@@ -1084,10 +1026,6 @@ def fulfill_after_payment(session_id: str) -> None:
             "title": "Payment confirmed, but email failed",
             "detail": detail,
         }
-        try:
-            st.toast("❌ Payment confirmed, but email failed", icon="❌")
-        except Exception:
-            pass
 
     log("All done ✅")
     st.session_state.confirmed_ok = False
@@ -1108,23 +1046,19 @@ if hasattr(st, "query_params"):
             return str(val) if val is not None else None
         except Exception:
             return None
-
-    cancelled_flag = _qp_get("cancelled")
-    paid_flag = _qp_get("paid")
-    session_id_from_query = _qp_get("session_id")
 else:
     query = st.experimental_get_query_params()
 
-    def _qp_get_old(name: str) -> Optional[str]:
+    def _qp_get(name: str) -> Optional[str]:
         try:
             val = query.get(name, [None])[0]
             return str(val) if val is not None else None
         except Exception:
             return None
 
-    cancelled_flag = _qp_get_old("cancelled")
-    paid_flag = _qp_get_old("paid")
-    session_id_from_query = _qp_get_old("session_id")
+cancelled_flag = _qp_get("cancelled")
+paid_flag = _qp_get("paid")
+session_id_from_query = _qp_get("session_id")
 
 if cancelled_flag == "1":
     st.session_state.final_banner = {
@@ -1153,7 +1087,7 @@ if paid_flag == "1" and session_id_from_query and not st.session_state.get("post
 
 
 # ============================================================
-# LOCATION MANAGER PREP
+# HELPERS FOR UI
 # ============================================================
 def _worker_status_line(name: str, obj: Any) -> str:
     return f"{name}: {'OK' if obj is not None else 'Import failed'}"
@@ -1165,239 +1099,198 @@ def _worker_status_line(name: str, obj: Any) -> str:
 left, middle, right = st.columns([0.28, 0.48, 0.24], gap="large")
 
 with left:
-    with st.container():
-        st.subheader("How it works")
+    st.subheader("How it works")
 
-        confirmed_ok = st.session_state.get("confirmed_ok", False)
-        payment_url = st.session_state.get("payment_url")
-        post_done = st.session_state.get("post_payment_done", False)
+    confirmed_ok = st.session_state.get("confirmed_ok", False)
+    payment_url = st.session_state.get("payment_url")
+    post_done = st.session_state.get("post_payment_done", False)
 
-        cls1 = "sa-step-box sa-step-done" if confirmed_ok or payment_url or post_done else "sa-step-box sa-step-current"
-        cls2 = "sa-step-box sa-step-done" if payment_url or post_done else "sa-step-box sa-step-current" if confirmed_ok else "sa-step-box"
-        cls3 = "sa-step-box sa-step-done" if post_done else "sa-step-box sa-step-current" if payment_url else "sa-step-box"
-        cls4 = "sa-step-box sa-step-done" if post_done else "sa-step-box"
+    cls1 = "sa-step-box sa-step-done" if confirmed_ok or payment_url or post_done else "sa-step-box sa-step-current"
+    cls2 = "sa-step-box sa-step-done" if payment_url or post_done else "sa-step-box sa-step-current" if confirmed_ok else "sa-step-box"
+    cls3 = "sa-step-box sa-step-done" if post_done else "sa-step-box sa-step-current" if payment_url else "sa-step-box"
+    cls4 = "sa-step-box sa-step-done" if post_done else "sa-step-box"
 
-        st.markdown(
-            f"""
-            <div class="{cls1}">
-              <b>Step 1 — Choose reports and location</b><br>
-              Enter your details, pick reports, and choose the location.
-            </div>
-            <div class="{cls2}">
-              <b>Step 2 — Confirm details</b><br>
-              Click <b>Confirm details</b> to lock in the order.
-            </div>
-            <div class="{cls3}">
-              <b>Step 3 — Pay in Stripe</b><br>
-              Click <b>Pay now</b>, complete payment, then return here automatically.
-            </div>
-            <div class="{cls4}">
-              <b>Step 4 — Reports emailed</b><br>
-              Sentinel generates the PDFs and emails them after payment is confirmed.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        f"""
+        <div class="{cls1}">
+          <b>Step 1 — Choose reports and location</b><br>
+          Enter your details, pick reports, and choose the location.
+        </div>
+        <div class="{cls2}">
+          <b>Step 2 — Confirm details</b><br>
+          Click <b>Confirm details</b> to lock in the order.
+        </div>
+        <div class="{cls3}">
+          <b>Step 3 — Pay in Stripe</b><br>
+          Click <b>Pay now</b>, complete payment, then return here automatically.
+        </div>
+        <div class="{cls4}">
+          <b>Step 4 — Reports emailed</b><br>
+          Sentinel generates the PDFs and emails them after payment is confirmed.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        st.markdown(
-            f"""
-            <div class="sa-next-box">
-              <b>What happens next</b><br>
-              {current_step_text()}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        f"""
+        <div class="sa-next-box">
+          <b>What happens next</b><br>
+          {current_step_text()}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        st.divider()
-        st.subheader("User details")
-        st.text_input("Name", key="user_name", disabled=st.session_state.is_running)
-        st.text_input("Email", key="user_email", disabled=st.session_state.is_running)
+    st.divider()
+    st.subheader("User details")
+    st.text_input("Name", key="user_name", disabled=st.session_state.is_running)
+    st.text_input("Email", key="user_email", disabled=st.session_state.is_running)
 
-        st.divider()
-        st.subheader("System checks")
+    st.divider()
+    st.subheader("System checks")
 
-        ok_stripe, stripe_msg = stripe_ready()
-        if ok_stripe:
-            st.success("Stripe: OK")
-        else:
-            st.error(f"Stripe: {stripe_msg}")
+    ok_stripe, stripe_msg = stripe_ready()
+    if ok_stripe:
+        st.success("Stripe: OK")
+    else:
+        st.error(f"Stripe: {stripe_msg}")
 
-        st.caption(_worker_status_line("Surf worker", surf_generate_report))
-        st.caption(_worker_status_line("Sky worker", sky_worker))
-        st.caption(_worker_status_line("Weather worker", weather_worker))
-        st.caption(_worker_status_line("Trip worker", trip_worker))
-        st.caption(_worker_status_line("Email sender", email_sender_mod))
+    st.caption(_worker_status_line("Surf worker", surf_generate_report))
+    st.caption(_worker_status_line("Sky worker", sky_worker))
+    st.caption(_worker_status_line("Weather worker", weather_worker))
+    st.caption(_worker_status_line("Trip worker", trip_worker))
+    st.caption(_worker_status_line("Email sender", email_sender_mod))
 
-        st.button(
-            "Reset / Refresh page",
-            use_container_width=True,
-            on_click=reset_app_state,
-            disabled=st.session_state.is_running,
-        )
+    st.button("Reset / Refresh page", use_container_width=True, on_click=reset_app_state, disabled=st.session_state.is_running)
 
 with middle:
-    with st.container():
-        st.subheader("Order setup")
+    st.subheader("Order setup")
 
-        banner = st.session_state.get("final_banner")
-        payment_url = st.session_state.get("payment_url")
+    banner = st.session_state.get("final_banner")
+    payment_url = st.session_state.get("payment_url")
 
-        if banner:
-            btype = banner.get("type", "info")
-            title = banner.get("title", "")
-            detail = banner.get("detail", "")
-            if btype == "success":
-                st.success(f"{title}\n\n{detail}")
-            elif btype == "error":
-                st.error(f"{title}\n\n{detail}")
-            else:
-                st.info(f"{title}\n\n{detail}")
+    if banner:
+        btype = banner.get("type", "info")
+        title = banner.get("title", "")
+        detail = banner.get("detail", "")
+        if btype == "success":
+            st.success(f"{title}\n\n{detail}")
+        elif btype == "error":
+            st.error(f"{title}\n\n{detail}")
+        else:
+            st.info(f"{title}\n\n{detail}")
 
-        if payment_url:
-            render_pay_button(payment_url)
-        elif st.session_state.is_running:
-            st.info("Sentinel is working on the next step…")
+    if payment_url:
+        render_pay_button(payment_url)
+    elif st.session_state.is_running:
+        st.info("Sentinel is working on the next step…")
 
-        st.multiselect(
-            "Report type(s)",
-            ["Surf", "Sky", "Weather", "Trip"],
-            default=["Weather"],
-            key="report_types",
-            disabled=st.session_state.is_running,
-        )
+    st.multiselect(
+        "Report type(s)",
+        ["Surf", "Sky", "Weather", "Trip"],
+        default=["Weather"],
+        key="report_types",
+        disabled=st.session_state.is_running,
+    )
 
+    st.selectbox(
+        "Location",
+        st.session_state.location_names,
+        key="main_location",
+        disabled=st.session_state.is_running,
+    )
+
+    with st.expander("➕ Add a new location", expanded=False):
+        st.text_input("New location name", key="new_loc_name", disabled=st.session_state.is_running)
         st.selectbox(
-            "Location",
-            st.session_state.location_names,
-            key="main_location",
+            "State",
+            ["VIC", "NSW", "QLD", "SA", "WA", "TAS", "NT", "ACT"],
+            key="new_state",
             disabled=st.session_state.is_running,
         )
 
-        with st.expander("➕ Add a new location", expanded=False):
-            st.text_input("New location name", key="new_loc_name", disabled=st.session_state.is_running)
-            st.selectbox(
-                "State",
-                ["VIC", "NSW", "QLD", "SA", "WA", "TAS", "NT", "ACT"],
-                key="new_state",
-                disabled=st.session_state.is_running,
-            )
+        cols = st.columns([1, 1], gap="small")
+        with cols[0]:
+            if st.button("Find matches", use_container_width=True, disabled=st.session_state.is_running):
+                st.session_state.new_location_candidates = []
+                name = (st.session_state.get("new_loc_name") or "").strip()
+                state = st.session_state.get("new_state") or "VIC"
+                if not name:
+                    log("ERROR: Enter a new location name first.")
+                else:
+                    try:
+                        matches = geocode_au(name, state)
+                        st.session_state.new_location_candidates = matches
+                        if matches:
+                            log(f"Found {len(matches)} match(es) for '{name}' ({state}). Select the best match.")
+                        else:
+                            log(f"No AU matches found for '{name}'. Try a different name.")
+                    except Exception as e:
+                        log(f"Geocoding error: {e}")
 
-            cols = st.columns([1, 1], gap="small")
-            with cols[0]:
-                if st.button("Find matches", use_container_width=True, disabled=st.session_state.is_running):
-                    st.session_state.new_location_candidates = []
-                    name = (st.session_state.get("new_loc_name") or "").strip()
-                    state = st.session_state.get("new_state") or "VIC"
-                    if not name:
-                        log("ERROR: Enter a new location name first.")
-                    else:
-                        try:
-                            matches = geocode_au(name, state)
-                            st.session_state.new_location_candidates = matches
-                            if matches:
-                                log(f"Found {len(matches)} match(es) for '{name}' ({state}). Select the best match.")
-                            else:
-                                log(f"No AU matches found for '{name}'. Try a different name.")
-                        except Exception as e:
-                            log(f"Geocoding error: {e}")
+        candidates = st.session_state.get("new_location_candidates") or []
+        if candidates:
+            labels = [c["label"] for c in candidates]
+            st.selectbox("Select best match", labels, key="chosen_geo_label", disabled=st.session_state.is_running)
 
-            candidates = st.session_state.get("new_location_candidates") or []
-            if candidates:
-                labels = [c["label"] for c in candidates]
-                st.selectbox("Select best match", labels, key="chosen_geo_label", disabled=st.session_state.is_running)
+        with cols[1]:
+            st.button("Save new location", type="primary", use_container_width=True, on_click=add_location_action, disabled=st.session_state.is_running)
 
-            with cols[1]:
-                st.button(
-                    "Save new location",
-                    type="primary",
-                    use_container_width=True,
-                    on_click=add_location_action,
-                    disabled=st.session_state.is_running,
-                )
-
-        if "Trip" in (st.session_state.get("report_types") or []):
-            st.divider()
-            st.markdown("**Trip setup**")
-            st.selectbox("Start location", st.session_state.location_names, key="trip_start", disabled=st.session_state.is_running)
-            st.selectbox("Next location", st.session_state.location_names, key="trip_stop1", disabled=st.session_state.is_running)
-            st.selectbox("Next location (2)", st.session_state.location_names, key="trip_stop2", disabled=st.session_state.is_running)
-            st.selectbox("Fuel type", ["Petrol", "Diesel"], key="fuel_type", disabled=st.session_state.is_running)
-            st.number_input(
-                "Fuel consumption (L/100km)",
-                min_value=1.0,
-                value=9.5,
-                step=0.1,
-                key="fuel_l_per_100km",
-                disabled=st.session_state.is_running,
-            )
-            default_price = 2.10 if (st.session_state.get("fuel_type") or "Petrol") == "Petrol" else 2.20
-            st.number_input(
-                "Fuel price ($/L)",
-                min_value=0.0,
-                value=float(default_price),
-                step=0.01,
-                key="fuel_price",
-                disabled=st.session_state.is_running,
-            )
-
+    if "Trip" in (st.session_state.get("report_types") or []):
         st.divider()
+        st.markdown("**Trip setup**")
+        st.selectbox("Start location", st.session_state.location_names, key="trip_start", disabled=st.session_state.is_running)
+        st.selectbox("Next location", st.session_state.location_names, key="trip_stop1", disabled=st.session_state.is_running)
+        st.selectbox("Next location (2)", st.session_state.location_names, key="trip_stop2", disabled=st.session_state.is_running)
+        st.selectbox("Fuel type", ["Petrol", "Diesel"], key="fuel_type", disabled=st.session_state.is_running)
+        st.number_input("Fuel consumption (L/100km)", min_value=1.0, value=9.5, step=0.1, key="fuel_l_per_100km", disabled=st.session_state.is_running)
+        default_price = 2.10 if (st.session_state.get("fuel_type") or "Petrol") == "Petrol" else 2.20
+        st.number_input("Fuel price ($/L)", min_value=0.0, value=float(default_price), step=0.01, key="fuel_price", disabled=st.session_state.is_running)
 
-        c1, c2 = st.columns(2, gap="small")
-        with c1:
-            st.button(
-                "✅ Confirm details",
-                type="primary",
-                use_container_width=True,
-                on_click=confirm_action,
-                disabled=st.session_state.is_running,
-            )
-        with c2:
-            st.button(
-                "💳 Create payment link",
-                type="primary",
-                use_container_width=True,
-                on_click=generate_pay_action,
-                disabled=st.session_state.is_running,
-            )
+    st.divider()
+    c1, c2 = st.columns(2, gap="small")
+    with c1:
+        st.button("✅ Confirm details", type="primary", use_container_width=True, on_click=confirm_action, disabled=st.session_state.is_running)
+    with c2:
+        st.button("💳 Create payment link", type="primary", use_container_width=True, on_click=generate_pay_action, disabled=st.session_state.is_running)
 
-        render_progress_box(height=320)
+    render_progress_box(height=320)
 
 with right:
-    with st.container():
-        st.subheader("Examples")
-        tab_surf, tab_sky, tab_weather, tab_trip = st.tabs(["Surf", "Sky", "Weather", "Trip"])
+    st.subheader("Examples")
+    tab_surf, tab_sky, tab_weather, tab_trip = st.tabs(["Surf", "Sky", "Weather", "Trip"])
 
-        with tab_surf:
-            if st.toggle("View Surf example", key="ex_surf"):
-                st.markdown("**Surf example**")
-                st.caption("Today panel + next best day + 7-day trend with surf windows.")
+    with tab_surf:
+        if st.toggle("View Surf example", key="ex_surf"):
+            st.markdown("**Surf example**")
+            st.caption("Today panel + next best day + 7-day trend with surf windows.")
 
-        with tab_sky:
-            if st.toggle("View Sky example", key="ex_sky"):
-                st.markdown("**Sky example**")
-                st.caption("Depends on your sky_worker output structure.")
+    with tab_sky:
+        if st.toggle("View Sky example", key="ex_sky"):
+            st.markdown("**Sky example**")
+            st.caption("Depends on your sky_worker output structure.")
 
-        with tab_weather:
-            if st.toggle("View Weather example", key="ex_weather"):
-                st.markdown("**Weather example**")
-                st.caption("Depends on your weather_worker output structure.")
+    with tab_weather:
+        if st.toggle("View Weather example", key="ex_weather"):
+            st.markdown("**Weather example**")
+            st.caption("Depends on your weather_worker output structure.")
 
-        with tab_trip:
-            if st.toggle("View Trip example", key="ex_trip"):
-                st.markdown("**Trip example**")
-                demo = pd.DataFrame(
-                    [
-                        {"Leg": "1. Start → Next", "Distance (km)": 120.0, "Fuel (L)": 11.40, "Fuel cost ($)": 23.94},
-                        {"Leg": "2. Next → Next 2", "Distance (km)": 65.0, "Fuel (L)": 6.18, "Fuel cost ($)": 12.98},
-                    ]
-                )
-                st.dataframe(demo, use_container_width=True, hide_index=True)
+    with tab_trip:
+        if st.toggle("View Trip example", key="ex_trip"):
+            st.markdown("**Trip example**")
+            demo = pd.DataFrame(
+                [
+                    {"Leg": "1. Start → Next", "Distance (km)": 120.0, "Fuel (L)": 11.40, "Fuel cost ($)": 23.94},
+                    {"Leg": "2. Next → Next 2", "Distance (km)": 65.0, "Fuel (L)": 6.18, "Fuel cost ($)": 12.98},
+                ]
+            )
+            st.dataframe(demo, use_container_width=True, hide_index=True)
 
-        outputs = st.session_state.get("outputs") or {}
-        if outputs:
-            st.divider()
-            st.caption("Latest outputs")
-            for k, v in outputs.items():
-                with st.expander(k, expanded=False):
-                    st.write(v)
+    outputs = st.session_state.get("outputs") or {}
+    if outputs:
+        st.divider()
+        st.caption("Latest outputs")
+        for k, v in outputs.items():
+            with st.expander(k, expanded=False):
+                st.write(v)
