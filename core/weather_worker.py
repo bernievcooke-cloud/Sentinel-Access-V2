@@ -14,11 +14,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
+from reportlab.lib import colors
 
 
 DEFAULT_TZ = "Australia/Melbourne"
@@ -132,6 +132,95 @@ def _format_hour_axis(ax):
     ax.tick_params(axis="x", rotation=0)
 
 
+def build_weather_status_table(
+    h_df: pd.DataFrame,
+    tz_name: str,
+    styles,
+    logger: Callable[[str], None] = print
+):
+    try:
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = ZoneInfo(DEFAULT_TZ)
+
+        now_dt = datetime.now(tz).replace(tzinfo=None)
+        check_df = h_df[
+            (h_df["time"] >= now_dt) &
+            (h_df["time"] <= now_dt + timedelta(hours=24))
+        ].copy()
+
+        if check_df.empty:
+            status = "NORMAL CONDITIONS"
+            bg = colors.honeydew
+        else:
+            fire = any(
+                (check_df["temperature_2m"] > 28) &
+                (
+                    (check_df["wind_direction_10m"] >= 315) |
+                    (check_df["wind_direction_10m"] <= 45)
+                )
+            )
+            storm = any(check_df["weather_code"].isin([95, 96, 99]))
+            wind = any(check_df["wind_gusts_10m"] > 45)
+            rain = any(check_df["precipitation"] >= 1)
+
+            status = "NORMAL CONDITIONS"
+            bg = colors.honeydew
+
+            if fire or storm or wind or rain:
+                if fire:
+                    status = "❌ 🔥 FIRE ALERT: HEAT & NORTH WIND"
+                    bg = colors.orange
+                elif storm:
+                    status = "❌ ⛈️ STORM ALERT"
+                    bg = colors.lightsalmon
+                elif wind:
+                    status = "❌ 💨 WIND ALERT"
+                    bg = colors.lightsalmon
+                elif rain:
+                    status = "❌ 🌧️ RAIN ALERT"
+                    bg = colors.lightsalmon
+
+        stat_t = Table(
+            [["WEATHER STATUS", status]],
+            colWidths=[4.5 * cm, 13.5 * cm]
+        )
+        stat_t.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (0, 0), colors.black),
+                ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
+                ("BACKGROUND", (1, 0), (1, 0), bg),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ])
+        )
+        return stat_t
+
+    except Exception as e:
+        logger(f"❌ Failed to build weather status table: {e}")
+        fallback = Table(
+            [["WEATHER STATUS", "NORMAL CONDITIONS"]],
+            colWidths=[4.5 * cm, 13.5 * cm]
+        )
+        fallback.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (0, 0), colors.black),
+                ("TEXTCOLOR", (0, 0), (0, 0), colors.white),
+                ("BACKGROUND", (1, 0), (1, 0), colors.honeydew),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+            ])
+        )
+        return fallback
+
+
 def generate_daily(h_df, location_name, tz_name=DEFAULT_TZ):
     try:
         tz = ZoneInfo(tz_name)
@@ -154,8 +243,23 @@ def generate_daily(h_df, location_name, tz_name=DEFAULT_TZ):
     ax_rain = ax_temp.twinx()
     ax_rain.spines["right"].set_position(("axes", 1.12))
 
-    l1a, = ax_temp.plot(actual["time"], actual["temperature_2m"], "-", lw=2.6, label="Actual Temp")
-    l1f, = ax_temp.plot(forecast["time"], forecast["temperature_2m"], "--", lw=2.6, label="Forecast Temp")
+    # TEMP LINES = RED
+    l1a, = ax_temp.plot(
+        actual["time"],
+        actual["temperature_2m"],
+        "-",
+        lw=2.6,
+        color="red",
+        label="Actual Temp"
+    )
+    l1f, = ax_temp.plot(
+        forecast["time"],
+        forecast["temperature_2m"],
+        "--",
+        lw=2.6,
+        color="red",
+        label="Forecast Temp"
+    )
 
     l2a, = ax_wind.plot(actual["time"], actual["wind_speed_10m"], "-", lw=1.6, label="Actual Wind")
     l2f, = ax_wind.plot(forecast["time"], forecast["wind_speed_10m"], "--", lw=1.6, label="Forecast Wind")
@@ -176,10 +280,23 @@ def generate_daily(h_df, location_name, tz_name=DEFAULT_TZ):
                 fontweight="bold",
             )
 
-    ax_temp.axvline(now_dt, linestyle=":", lw=2)
+        # Alert threshold markers retained from second script logic
+        if pd.notna(row["temperature_2m"]) and pd.notna(row["wind_direction_10m"]):
+            if row["temperature_2m"] > 28 and (row["wind_direction_10m"] >= 315 or row["wind_direction_10m"] <= 45):
+                ax_temp.scatter(row["time"], row["temperature_2m"], color="red", marker="x", s=120, zorder=5)
+
+        if pd.notna(row["wind_gusts_10m"]) and pd.notna(row["wind_speed_10m"]):
+            if row["wind_gusts_10m"] > 45:
+                ax_wind.scatter(row["time"], row["wind_speed_10m"], color="red", marker="x", s=120, zorder=5)
+
+        if pd.notna(row["precipitation"]):
+            if row["precipitation"] >= 1:
+                ax_rain.scatter(row["time"], row["precipitation"], color="red", marker="x", s=120, zorder=5)
+
+    ax_temp.axvline(now_dt, linestyle=":", lw=2, color="black")
 
     ax_temp.set_title(f"{location_name.upper()} — TODAY (Hourly)", fontweight="bold", fontsize=14)
-    ax_temp.set_ylabel("Temp (°C)", fontweight="bold")
+    ax_temp.set_ylabel("Temp (°C)", fontweight="bold", color="red")
     ax_wind.set_ylabel("Wind (km/h)", fontweight="bold")
     ax_rain.set_ylabel("Rain (mm)", fontweight="bold")
 
@@ -222,7 +339,14 @@ def generate_weekly(d_df, location_name):
     ax_rain = ax_temp.twinx()
     ax_rain.spines["right"].set_position(("axes", 1.12))
 
-    l1, = ax_temp.plot(d_df["time"], d_df["temperature_2m_max"], lw=2.6, label="Max Temp")
+    # WEEKLY TEMP LINE = RED
+    l1, = ax_temp.plot(
+        d_df["time"],
+        d_df["temperature_2m_max"],
+        lw=2.6,
+        color="red",
+        label="Max Temp"
+    )
     l2, = ax_wind.plot(d_df["time"], d_df["wind_speed_10m_max"], lw=1.8, label="Max Wind")
     l2g, = ax_wind.plot(d_df["time"], d_df["wind_gusts_10m_max"], linestyle=":", lw=1.3, label="Max Gusts")
     l3 = ax_rain.bar(d_df["time"], d_df["precipitation_sum"], alpha=0.25, width=0.55, label="Rain")
@@ -240,8 +364,21 @@ def generate_weekly(d_df, location_name):
                 fontweight="bold",
             )
 
+        # Alert threshold markers retained from second script logic
+        if pd.notna(row["temperature_2m_max"]) and pd.notna(row["wind_direction_10m_dominant"]):
+            if row["temperature_2m_max"] > 28 and (row["wind_direction_10m_dominant"] >= 315 or row["wind_direction_10m_dominant"] <= 45):
+                ax_temp.scatter(row["time"], row["temperature_2m_max"], color="red", marker="x", s=120, zorder=5)
+
+        if pd.notna(row["wind_gusts_10m_max"]) and pd.notna(row["wind_speed_10m_max"]):
+            if row["wind_gusts_10m_max"] > 45:
+                ax_wind.scatter(row["time"], row["wind_speed_10m_max"], color="red", marker="x", s=120, zorder=5)
+
+        if pd.notna(row["precipitation_sum"]):
+            if row["precipitation_sum"] >= 5:
+                ax_rain.scatter(row["time"], row["precipitation_sum"], color="red", marker="x", s=120, zorder=5)
+
     ax_temp.set_title(f"7-DAY OUTLOOK: {location_name}", fontweight="bold", fontsize=14)
-    ax_temp.set_ylabel("Max Temp (°C)", fontweight="bold")
+    ax_temp.set_ylabel("Max Temp (°C)", fontweight="bold", color="red")
     ax_wind.set_ylabel("Wind (km/h)", fontweight="bold")
     ax_rain.set_ylabel("Rain (mm)", fontweight="bold")
 
@@ -302,8 +439,12 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
         )
         styles = getSampleStyleSheet()
 
+        status_table = build_weather_status_table(h_df, tz_name, styles, logger=logger)
+
         story = [
             Paragraph(f"<b>WEATHER SENTINEL REPORT: {target}</b>", styles["Title"]),
+            Spacer(1, 8),
+            status_table,
             Spacer(1, 10),
             Image(daily_img, 19 * cm, 9.2 * cm),
             Spacer(1, 10),
