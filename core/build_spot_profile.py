@@ -130,7 +130,7 @@ def fetch_nearby_water_geometry(lat: float, lon: float, radius_m: int = SEARCH_R
                 points.append((float(plat), float(plon)))
 
     seen = set()
-    unique_points = []
+    unique_points: list[tuple[float, float]] = []
     for p in points:
         key = (round(p[0], 6), round(p[1], 6))
         if key not in seen:
@@ -160,20 +160,36 @@ def estimate_beach_orientation(lat: float, lon: float, nearby_points: list[tuple
 
 
 def fallback_orientation_from_search_name(search_name: str) -> float:
-    """
-    Simple fallback so public runs continue even if Overpass is down.
-    These are broad defaults, not spot-perfect.
-    """
     s = (search_name or "").lower()
 
-    if any(x in s for x in ["noosa", "sunshine", "gold coast", "snapper", "kirra", "burleigh", "bondi", "manly", "byron"]):
-        return 90.0   # east-facing-ish
-    if any(x in s for x in ["bells", "torquay", "jan juc", "point leo", "phillip island", "wilsons prom"]):
-        return 180.0  # south-facing-ish
-    if any(x in s for x in ["margaret river", "yallingup", "trigg", "cottesloe", "gnaraloo"]):
-        return 270.0  # west-facing-ish
+    if any(
+        x in s
+        for x in [
+            "noosa", "sunshine", "gold coast", "snapper", "kirra",
+            "burleigh", "bondi", "manly", "byron",
+        ]
+    ):
+        return 90.0
+
+    if any(
+        x in s
+        for x in [
+            "bells", "torquay", "jan juc", "point leo",
+            "phillip island", "wilsons prom",
+        ]
+    ):
+        return 180.0
+
+    if any(
+        x in s
+        for x in [
+            "margaret river", "yallingup", "trigg", "cottesloe", "gnaraloo",
+        ]
+    ):
+        return 270.0
+
     if any(x in s for x in ["middleton", "waitpinga", "pondalowie"]):
-        return 180.0  # south-facing-ish
+        return 180.0
 
     return 180.0
 
@@ -190,7 +206,7 @@ def derive_swell_window(beach_orientation_deg: float | None) -> tuple[int | None
 
 
 # ============================================================
-# STEP 5 — BUILD PROFILE
+# STEP 5 — BUILD PROFILE FROM GEOCODED SEARCH
 # ============================================================
 def build_profile(search_name: str) -> dict:
     geo = geocode_place(search_name)
@@ -202,7 +218,6 @@ def build_profile(search_name: str) -> dict:
     print(f"Lat/Lon : {lat:.5f}, {lon:.5f}")
 
     time.sleep(1.0)
-
     profile_method = "auto-derived"
 
     try:
@@ -211,7 +226,6 @@ def build_profile(search_name: str) -> dict:
         beach_orientation_deg = estimate_beach_orientation(lat, lon, nearby_points)
     except Exception as e:
         print(f"WARNING: Coastline lookup failed: {e}")
-        nearby_points = []
         beach_orientation_deg = None
 
     if beach_orientation_deg is None:
@@ -221,7 +235,7 @@ def build_profile(search_name: str) -> dict:
 
     swell_min_dir, swell_max_dir = derive_swell_window(beach_orientation_deg)
 
-    profile = {
+    return {
         "location_name": location_name,
         "lat": lat,
         "lon": lon,
@@ -236,9 +250,62 @@ def build_profile(search_name: str) -> dict:
         "profile_method": profile_method,
         "search_name": search_name,
     }
-    return profile
 
 
+# ============================================================
+# STEP 6 — BUILD PROFILE FROM KNOWN LAT/LON
+# ============================================================
+def build_profile_from_known_location(
+    search_name: str,
+    lat: float,
+    lon: float,
+    location_name: str | None = None,
+) -> dict:
+    lat = float(lat)
+    lon = float(lon)
+    location_name = (location_name or search_name or "").strip() or f"{lat:.5f}, {lon:.5f}"
+
+    print(f"Using provided location: {location_name}")
+    print(f"Lat/Lon : {lat:.5f}, {lon:.5f}")
+
+    time.sleep(0.2)
+    profile_method = "auto-derived"
+
+    try:
+        nearby_points = fetch_nearby_water_geometry(lat, lon)
+        print(f"Nearby geometry points found: {len(nearby_points)}")
+        beach_orientation_deg = estimate_beach_orientation(lat, lon, nearby_points)
+    except Exception as e:
+        print(f"WARNING: Coastline lookup failed: {e}")
+        beach_orientation_deg = None
+
+    if beach_orientation_deg is None:
+        beach_orientation_deg = fallback_orientation_from_search_name(search_name or location_name)
+        profile_method = "fallback-derived"
+        print(f"Using fallback beach orientation: {beach_orientation_deg:.1f}° {deg_to_text(beach_orientation_deg)}")
+
+    swell_min_dir, swell_max_dir = derive_swell_window(beach_orientation_deg)
+
+    return {
+        "location_name": location_name,
+        "lat": lat,
+        "lon": lon,
+        "beach_orientation_deg": round(beach_orientation_deg, 1),
+        "beach_orientation_text": deg_to_text(beach_orientation_deg),
+        "preferred_swell_dir_min": swell_min_dir,
+        "preferred_swell_dir_max": swell_max_dir,
+        "preferred_swell_min_m": DEFAULT_SWELL_MIN_M,
+        "preferred_swell_max_m": DEFAULT_SWELL_MAX_M,
+        "preferred_tide_min_m": None,
+        "preferred_tide_max_m": None,
+        "profile_method": profile_method,
+        "search_name": search_name,
+    }
+
+
+# ============================================================
+# SAVE
+# ============================================================
 def save_profile(profile: dict, output_json: str | Path = OUTPUT_JSON) -> Path:
     out_path = Path(output_json)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,6 +313,9 @@ def save_profile(profile: dict, output_json: str | Path = OUTPUT_JSON) -> Path:
     return out_path
 
 
+# ============================================================
+# MAIN
+# ============================================================
 def main() -> None:
     try:
         profile = build_profile(DEFAULT_SEARCH_NAME)
