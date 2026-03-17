@@ -755,8 +755,8 @@ def generate_report(target, data, output_dir, logger=print):
 
     if isinstance(data, dict):
         display_name = data.get("display_name")
-        latitude = data.get("latitude")
-        longitude = data.get("longitude")
+        latitude = data.get("latitude", data.get("lat"))
+        longitude = data.get("longitude", data.get("lon"))
 
     search_name = display_name or target
 
