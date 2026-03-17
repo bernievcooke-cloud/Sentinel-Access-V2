@@ -13,12 +13,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import requests
+import time
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     Image,
-    Paragraph,
+    Paragraph, 
     SimpleDocTemplate,
     Spacer,
 )
@@ -105,10 +106,36 @@ def score_out_of_10(score_100: float | int | None) -> str:
 # ============================================================
 # FETCHERS
 # ============================================================
-def fetch_json(url: str) -> dict:
-    r = requests.get(url, timeout=REQUEST_TIMEOUT)
-    r.raise_for_status()
-    return r.json()
+def fetch_json(url: str, retries: int = 3, backoff_seconds: float = 2.0) -> dict:
+    last_error = None
+
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, timeout=REQUEST_TIMEOUT)
+            r.raise_for_status()
+            return r.json()
+
+        except requests.HTTPError as e:
+            last_error = e
+            status = getattr(e.response, "status_code", None)
+
+            if status == 429 and attempt < retries - 1:
+                sleep_for = backoff_seconds * (attempt + 1)
+                time.sleep(sleep_for)
+                continue
+            raise
+
+        except requests.RequestException as e:
+            last_error = e
+            if attempt < retries - 1:
+                sleep_for = backoff_seconds * (attempt + 1)
+                time.sleep(sleep_for)
+                continue
+            raise
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("fetch_json failed unexpectedly.")
 
 
 def fetch_open_meteo_marine(lat: float, lon: float) -> pd.DataFrame:
@@ -191,17 +218,28 @@ def add_optional_tide(df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
 # ============================================================
 def build_dataset(lat: float, lon: float) -> tuple[pd.DataFrame, dict]:
     marine = fetch_open_meteo_marine(lat, lon)
-    wx_main = fetch_open_meteo_weather(lat, lon)
-    wx_bom = fetch_bom_access_g_weather(lat, lon)
-
-    df = marine.merge(wx_main, on="time", how="inner")
 
     diagnostics = {
         "marine_source": "Open-Meteo Marine",
         "wind_source_main": "Open-Meteo Forecast",
-        "wind_source_secondary": "Open-Meteo BOM ACCESS-G" if wx_bom is not None else "Unavailable",
+        "wind_source_secondary": "Open-Meteo BOM ACCESS-G",
         "tide_source": "",
     }
+
+    # Main weather source with graceful fallback
+    try:
+        wx_main = fetch_open_meteo_weather(lat, lon)
+    except Exception:
+        wx_main = marine[["time"]].copy()
+        wx_main["wind_speed_10m_main"] = np.nan
+        wx_main["wind_direction_10m_main"] = np.nan
+        diagnostics["wind_source_main"] = "Unavailable (rate-limited or failed)"
+
+    wx_bom = fetch_bom_access_g_weather(lat, lon)
+    if wx_bom is None:
+        diagnostics["wind_source_secondary"] = "Unavailable"
+
+    df = marine.merge(wx_main, on="time", how="left")
 
     if wx_bom is not None:
         df = df.merge(wx_bom, on="time", how="left")
