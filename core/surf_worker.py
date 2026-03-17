@@ -647,19 +647,23 @@ def build_pdf(df: pd.DataFrame, diagnostics: dict, spot: dict, output_dir: str |
     styles = getSampleStyleSheet()
 
     story = [
-        Paragraph(f"<b>{location_name.upper()} SURF REPORT</b>", styles["Title"]),
-        Spacer(1, 0.08 * cm),
-        Image(generate_daily_chart(df, location_name), 18.6 * cm, 5.00 * cm),
-        Spacer(1, 0.05 * cm),
-        Image(generate_next_best_day_chart(df, location_name), 18.6 * cm, 5.00 * cm),
-        Spacer(1, 0.05 * cm),
-        Image(generate_weekly_chart(df, location_name), 18.6 * cm, 5.20 * cm),
-        Spacer(1, 0.03 * cm),
-        Paragraph(
-            "<font size=7.0><b>Guide:</b> Good 8–10/10 | Fair 6–7/10 | Marginal 4–5/10 | Poor 0–3/10</font>",
-            styles["Normal"],
-        ),
-    ]
+    Paragraph(f"<b>{location_name.upper()} SURF REPORT</b>", styles["Title"]),
+    Spacer(1, 0.04 * cm),
+
+    Image(generate_daily_chart(df, location_name), 18.6 * cm, 5.65 * cm),
+    Spacer(1, 0.02 * cm),
+
+    Image(generate_next_best_day_chart(df, location_name), 18.6 * cm, 5.65 * cm),
+    Spacer(1, 0.02 * cm),
+
+    Image(generate_weekly_chart(df, location_name), 18.6 * cm, 6.05 * cm),
+    Spacer(1, 0.01 * cm),
+
+    Paragraph(
+        "<font size=7.0><b>Guide:</b> Good 8–10/10 | Fair 6–7/10 | Marginal 4–5/10 | Poor 0–3/10</font>",
+        styles["Normal"],
+    ),
+]
 
     doc.build(story)
     return str(ppath)
