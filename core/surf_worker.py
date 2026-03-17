@@ -13,17 +13,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import requests
-from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     Image,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
-    Table,
-    TableStyle,
 )
 
 from core.build_spot_profile import (
@@ -648,87 +645,10 @@ def build_pdf(df: pd.DataFrame, diagnostics: dict, spot: dict, output_dir: str |
     )
 
     styles = getSampleStyleSheet()
-    compact = ParagraphStyle(
-        "compact",
-        parent=styles["BodyText"],
-        fontName="Helvetica",
-        fontSize=8.4,
-        leading=9.6,
-        spaceAfter=0,
-    )
-    compact_bold = ParagraphStyle(
-        "compact_bold",
-        parent=compact,
-        fontName="Helvetica-Bold",
-    )
-
-    today_df = get_today_df(df)
-    next_best_df = get_next_best_day_df(df)
-
-    best_today = today_df.loc[today_df["surf_score"].idxmax()]
-    today_sorted = today_df.sort_values("surf_score", ascending=False).reset_index(drop=True)
-    backup_today = today_sorted.iloc[1] if len(today_sorted) > 1 else best_today
-    next_best = next_best_df.loc[next_best_df["surf_score"].idxmax()]
-
-    daily_rows = [
-        [Paragraph("Location", compact_bold), Paragraph(location_name, compact)],
-        [
-            Paragraph("Best window today", compact_bold),
-            Paragraph(f"{best_today['time'].strftime('%H:%M')} — {best_today['surf_rating']} ({score_out_of_10(best_today['surf_score'])})", compact),
-        ],
-        [
-            Paragraph("Backup window", compact_bold),
-            Paragraph(f"{backup_today['time'].strftime('%H:%M')} — {backup_today['surf_rating']} ({score_out_of_10(backup_today['surf_score'])})", compact),
-        ],
-        [
-            Paragraph("Next best day", compact_bold),
-            Paragraph(f"{next_best['time'].strftime('%a %d %b %H:%M')} — {next_best['surf_rating']} ({score_out_of_10(next_best['surf_score'])})", compact),
-        ],
-        [
-            Paragraph("Wind", compact_bold),
-            Paragraph(f"{safe_float_text(best_today['wind_speed_10m'], '.0f', ' km/h')} {deg_to_text(best_today['wind_direction_10m'])}", compact),
-        ],
-        [
-            Paragraph("Swell", compact_bold),
-            Paragraph(f"{safe_float_text(best_today['swell_wave_height'], '.1f', ' m')} {deg_to_text(best_today['swell_wave_direction'])}", compact),
-        ],
-        [
-            Paragraph("Wave period", compact_bold),
-            Paragraph(f"{safe_float_text(best_today['wave_period'], '.0f', ' s')}", compact),
-        ],
-        [
-            Paragraph("Confidence", compact_bold),
-            Paragraph(f"{int(best_today['confidence'] * 100)}%", compact),
-        ],
-        [
-            Paragraph("Why", compact_bold),
-            Paragraph(best_today["summary_reasons"], compact),
-        ],
-    ]
-
-    t1 = Table(daily_rows, colWidths=[3.9 * cm, 14.7 * cm])
-    t1.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (0, -1), colors.black),
-                ("TEXTCOLOR", (0, 0), (0, -1), colors.white),
-                ("BACKGROUND", (1, 0), (1, -1), colors.whitesmoke),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("BOX", (0, 0), (-1, -1), 0.45, colors.black),
-                ("INNERGRID", (0, 0), (-1, -1), 0.22, colors.grey),
-                ("TOPPADDING", (0, 0), (-1, -1), 2),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ]
-        )
-    )
 
     story = [
         Paragraph(f"<b>{location_name.upper()} SURF REPORT</b>", styles["Title"]),
         Spacer(1, 0.08 * cm),
-        t1,
-        Spacer(1, 0.10 * cm),
         Image(generate_daily_chart(df, location_name), 18.6 * cm, 5.00 * cm),
         Spacer(1, 0.05 * cm),
         Image(generate_next_best_day_chart(df, location_name), 18.6 * cm, 5.00 * cm),
