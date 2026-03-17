@@ -12,17 +12,17 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# ============================================================
+# ===========================================================
 # PAGE CONFIG MUST BE FIRST STREAMLIT COMMAND
 # ============================================================
-st.set_page_config(page_title="Oz Trip Planner", layout="wide")
+st.set_page_config(page_title="Aust:Surf-Weather-Trip Planner")
 
 # ============================================================
 # HEADER
 # ============================================================
 col_title, col_link = st.columns([0.72, 0.28])
 with col_title:
-    st.title("Aust Surf Weather Sky Trip Planner")
+    st.title("Aust: Surf-Weather-Sky-trip Planner")
 with col_link:
     st.markdown(
         """
