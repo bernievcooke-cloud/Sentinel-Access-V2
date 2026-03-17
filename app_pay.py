@@ -1096,11 +1096,11 @@ def fulfill_after_payment(session_id: str) -> None:
         for a in attachments:
             log(f" - {Path(a).name}")
 
-    subject = f"Sentinel Access — {', '.join(selected_in_order)} — {main_location}"
+    subject = f"Surf Sky Weather Trip Planer" — {', '.join(selected_in_order)} — {main_location}"
     body_lines = [
         f"Hello {user.get('name') or ''}",
         "",
-        "Attached are your Sentinel Access report(s):",
+        "Attached are your Selected Report(s):",
         f"- Reports: {', '.join(selected_in_order)}",
         f"- Location: {main_location}",
     ]
@@ -1310,7 +1310,7 @@ with middle:
     if payment_url:
         render_pay_button(payment_url)
     elif st.session_state.is_running or st.session_state.get("pending_paid_session_id"):
-        st.info("Sentinel is working on the next step…")
+        st.info("System is working on the next step…")
 
     st.multiselect(
         "Report type(s)",
