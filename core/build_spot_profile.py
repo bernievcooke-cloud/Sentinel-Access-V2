@@ -159,6 +159,25 @@ def estimate_beach_orientation(lat: float, lon: float, nearby_points: list[tuple
     return facing_deg
 
 
+def fallback_orientation_from_search_name(search_name: str) -> float:
+    """
+    Simple fallback so public runs continue even if Overpass is down.
+    These are broad defaults, not spot-perfect.
+    """
+    s = (search_name or "").lower()
+
+    if any(x in s for x in ["noosa", "sunshine", "gold coast", "snapper", "kirra", "burleigh", "bondi", "manly", "byron"]):
+        return 90.0   # east-facing-ish
+    if any(x in s for x in ["bells", "torquay", "jan juc", "point leo", "phillip island", "wilsons prom"]):
+        return 180.0  # south-facing-ish
+    if any(x in s for x in ["margaret river", "yallingup", "trigg", "cottesloe", "gnaraloo"]):
+        return 270.0  # west-facing-ish
+    if any(x in s for x in ["middleton", "waitpinga", "pondalowie"]):
+        return 180.0  # south-facing-ish
+
+    return 180.0
+
+
 # ============================================================
 # STEP 4 — AUTO DERIVE SURF WINDOW
 # ============================================================
@@ -184,13 +203,21 @@ def build_profile(search_name: str) -> dict:
 
     time.sleep(1.0)
 
-    nearby_points = fetch_nearby_water_geometry(lat, lon)
-    print(f"Nearby geometry points found: {len(nearby_points)}")
+    profile_method = "auto-derived"
 
-    beach_orientation_deg = estimate_beach_orientation(lat, lon, nearby_points)
+    try:
+        nearby_points = fetch_nearby_water_geometry(lat, lon)
+        print(f"Nearby geometry points found: {len(nearby_points)}")
+        beach_orientation_deg = estimate_beach_orientation(lat, lon, nearby_points)
+    except Exception as e:
+        print(f"WARNING: Coastline lookup failed: {e}")
+        nearby_points = []
+        beach_orientation_deg = None
+
     if beach_orientation_deg is None:
-        print("Could not estimate beach orientation. Falling back to generic south-facing guess.")
-        beach_orientation_deg = 180.0
+        beach_orientation_deg = fallback_orientation_from_search_name(search_name)
+        profile_method = "fallback-derived"
+        print(f"Using fallback beach orientation: {beach_orientation_deg:.1f}° {deg_to_text(beach_orientation_deg)}")
 
     swell_min_dir, swell_max_dir = derive_swell_window(beach_orientation_deg)
 
@@ -206,7 +233,7 @@ def build_profile(search_name: str) -> dict:
         "preferred_swell_max_m": DEFAULT_SWELL_MAX_M,
         "preferred_tide_min_m": None,
         "preferred_tide_max_m": None,
-        "profile_method": "auto-derived",
+        "profile_method": profile_method,
         "search_name": search_name,
     }
     return profile
