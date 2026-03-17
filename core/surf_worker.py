@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -13,13 +14,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import requests
-import time
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     Image,
-    Paragraph, 
+    Paragraph,
     SimpleDocTemplate,
     Spacer,
 )
@@ -118,18 +118,15 @@ def fetch_json(url: str, retries: int = 3, backoff_seconds: float = 2.0) -> dict
         except requests.HTTPError as e:
             last_error = e
             status = getattr(e.response, "status_code", None)
-
             if status == 429 and attempt < retries - 1:
-                sleep_for = backoff_seconds * (attempt + 1)
-                time.sleep(sleep_for)
+                time.sleep(backoff_seconds * (attempt + 1))
                 continue
             raise
 
         except requests.RequestException as e:
             last_error = e
             if attempt < retries - 1:
-                sleep_for = backoff_seconds * (attempt + 1)
-                time.sleep(sleep_for)
+                time.sleep(backoff_seconds * (attempt + 1))
                 continue
             raise
 
@@ -146,7 +143,7 @@ def fetch_open_meteo_marine(lat: float, lon: float) -> pd.DataFrame:
         f"&forecast_days={FORECAST_DAYS}"
         "&timezone=auto"
     )
-    data = fetch_json(url)
+    data = fetch_json(url, retries=4, backoff_seconds=2.0)
     hourly = data.get("hourly", {})
     df = pd.DataFrame(hourly)
     if df.empty or "time" not in df.columns:
@@ -163,7 +160,7 @@ def fetch_open_meteo_weather(lat: float, lon: float) -> pd.DataFrame:
         f"&forecast_days={FORECAST_DAYS}"
         "&timezone=auto"
     )
-    data = fetch_json(url)
+    data = fetch_json(url, retries=4, backoff_seconds=2.5)
     hourly = data.get("hourly", {})
     df = pd.DataFrame(hourly)
     if df.empty or "time" not in df.columns:
@@ -186,7 +183,7 @@ def fetch_bom_access_g_weather(lat: float, lon: float) -> pd.DataFrame | None:
             f"&forecast_days={FORECAST_DAYS}"
             "&timezone=auto"
         )
-        data = fetch_json(url)
+        data = fetch_json(url, retries=3, backoff_seconds=2.0)
         hourly = data.get("hourly", {})
         df = pd.DataFrame(hourly)
         if df.empty or "time" not in df.columns:
@@ -226,7 +223,6 @@ def build_dataset(lat: float, lon: float) -> tuple[pd.DataFrame, dict]:
         "tide_source": "",
     }
 
-    # Main weather source with graceful fallback
     try:
         wx_main = fetch_open_meteo_weather(lat, lon)
     except Exception:
@@ -527,7 +523,7 @@ def annotate_direction_points(ax1, ax2, day_df: pd.DataFrame, y_max: float, incl
 
 
 def base_day_chart(day_df: pd.DataFrame, title: str, include_current_line: bool) -> BytesIO:
-    fig, ax1 = plt.subplots(figsize=(10.8, 2.95))
+    fig, ax1 = plt.subplots(figsize=(10.8, 3.15))
     ax2 = ax1.twinx()
 
     ax1.plot(day_df["time"], day_df["swell_wave_height"], lw=2.2, color="#1f77b4", label="Swell (m)")
@@ -590,7 +586,7 @@ def generate_next_best_day_chart(df: pd.DataFrame, location_name: str) -> BytesI
 
 
 def generate_weekly_chart(df: pd.DataFrame, location_name: str) -> BytesIO:
-    fig, ax1 = plt.subplots(figsize=(10.8, 3.05))
+    fig, ax1 = plt.subplots(figsize=(10.8, 3.25))
     ax2 = ax1.twinx()
 
     ax1.plot(df["time"], df["swell_wave_height"], lw=2.0, color="#1f77b4", label="Swell (m)")
@@ -685,23 +681,23 @@ def build_pdf(df: pd.DataFrame, diagnostics: dict, spot: dict, output_dir: str |
     styles = getSampleStyleSheet()
 
     story = [
-    Paragraph(f"<b>{location_name.upper()} SURF REPORT</b>", styles["Title"]),
-    Spacer(1, 0.04 * cm),
+        Paragraph(f"<b>{location_name.upper()} SURF REPORT</b>", styles["Title"]),
+        Spacer(1, 0.03 * cm),
 
-    Image(generate_daily_chart(df, location_name), 18.6 * cm, 5.65 * cm),
-    Spacer(1, 0.02 * cm),
+        Image(generate_daily_chart(df, location_name), 18.6 * cm, 5.45 * cm),
+        Spacer(1, 0.015 * cm),
 
-    Image(generate_next_best_day_chart(df, location_name), 18.6 * cm, 5.65 * cm),
-    Spacer(1, 0.02 * cm),
+        Image(generate_next_best_day_chart(df, location_name), 18.6 * cm, 5.45 * cm),
+        Spacer(1, 0.015 * cm),
 
-    Image(generate_weekly_chart(df, location_name), 18.6 * cm, 6.05 * cm),
-    Spacer(1, 0.01 * cm),
+        Image(generate_weekly_chart(df, location_name), 18.6 * cm, 5.85 * cm),
+        Spacer(1, 0.01 * cm),
 
-    Paragraph(
-        "<font size=7.0><b>Guide:</b> Good 8–10/10 | Fair 6–7/10 | Marginal 4–5/10 | Poor 0–3/10</font>",
-        styles["Normal"],
-    ),
-]
+        Paragraph(
+            "<font size=7.0><b>Guide:</b> Good 8–10/10 | Fair 6–7/10 | Marginal 4–5/10 | Poor 0–3/10</font>",
+            styles["Normal"],
+        ),
+    ]
 
     doc.build(story)
     return str(ppath)
