@@ -22,12 +22,12 @@ st.set_page_config(page_title="Aust: Surf, Weather, Sky, Trip Planner", layout="
 # ============================================================
 col_title, col_link = st.columns([0.72, 0.28])
 with col_title:
-    st.title("Aust: Surf, Weather, Sky, Trip Planner")
+    st.title("")
 with col_link:
     st.markdown(
         """
         <div style="text-align:right; padding-top: 1.1rem;">
-          <a href="https://www.oztripplanner.net" target="_blank"
+          <a href="http://surfskiesweatherreports.com/" target="_blank"
              style="
                 display:inline-block;
                 text-decoration:none;
