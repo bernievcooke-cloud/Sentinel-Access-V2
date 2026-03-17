@@ -26,12 +26,19 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from core.build_spot_profile import build_profile, save_profile
+from core.build_spot_profile import (
+    build_profile,
+    build_profile_from_known_location,
+    save_profile,
+)
 
+# ============================================================
+# CONFIG
+# ============================================================
+PROFILE_PATH = Path(__file__).resolve().parents[1] / "config" / "spot_profile.json"
 REQUEST_TIMEOUT = 20
 FORECAST_DAYS = 7
 USE_ESTIMATED_TIDE_IF_MISSING = False
-PROFILE_PATH = Path(__file__).resolve().parents[1] / "config" / "spot_profile.json"
 
 
 def _log(logger, msg: str) -> None:
@@ -743,13 +750,28 @@ def build_pdf(df: pd.DataFrame, diagnostics: dict, spot: dict, output_dir: str |
 # ============================================================
 def generate_report(target, data, output_dir, logger=print):
     display_name = None
+    latitude = None
+    longitude = None
+
     if isinstance(data, dict):
         display_name = data.get("display_name")
+        latitude = data.get("latitude")
+        longitude = data.get("longitude")
 
     search_name = display_name or target
 
     _log(logger, f"[SURF] Building spot profile for {search_name}")
-    spot = build_profile(search_name)
+
+    if latitude is not None and longitude is not None:
+        spot = build_profile_from_known_location(
+            search_name=search_name,
+            lat=float(latitude),
+            lon=float(longitude),
+            location_name=display_name or search_name,
+        )
+    else:
+        spot = build_profile(search_name)
+
     save_profile(spot, PROFILE_PATH)
     _log(logger, f"[SURF] Spot profile saved to {PROFILE_PATH}")
 
@@ -766,7 +788,56 @@ def generate_report(target, data, output_dir, logger=print):
     pdf_path = build_pdf(df, diagnostics, spot, output_dir)
 
     best = df.loc[df["surf_score"].idxmax()]
-    _log(logger, f"[SURF] Best window: {best['time'].strftime('%Y-%m-%d %H:%M')} — {best['surf_rating']} ({score_out_of_10(best['surf_score'])})")
+    _log(
+        logger,
+        f"[SURF] Best window: {best['time'].strftime('%Y-%m-%d %H:%M')} — "
+        f"{best['surf_rating']} ({score_out_of_10(best['surf_score'])})",
+    )
     _log(logger, f"[SURF] PDF saved: {pdf_path}")
 
     return pdf_path
+
+
+# ============================================================
+# STANDALONE RUN
+# ============================================================
+def main() -> None:
+    try:
+        if not PROFILE_PATH.exists():
+            raise FileNotFoundError(
+                f"Spot profile not found: {PROFILE_PATH}\n"
+                f"Run build_spot_profile.py first."
+            )
+
+        import json
+
+        spot = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+        lat = float(spot["lat"])
+        lon = float(spot["lon"])
+
+        df, diagnostics = build_dataset(lat, lon)
+        df = find_best_windows(df, spot)
+
+        output_dir = Path.cwd() / "outputs"
+        output_path = build_pdf(df, diagnostics, spot, output_dir)
+
+        best = df.loc[df["surf_score"].idxmax()]
+        print("SUCCESS")
+        print(f"Location: {spot['location_name']}")
+        print(f"Orientation: {float(spot['beach_orientation_deg']):.1f}° {deg_to_text(spot['beach_orientation_deg'])}")
+        print(f"Preferred swell window: {spot['preferred_swell_dir_min']}° to {spot['preferred_swell_dir_max']}°")
+        print(f"Best forecast window: {best['time'].strftime('%Y-%m-%d %H:%M')}")
+        print(f"Rating: {best['surf_rating']} ({score_out_of_10(best['surf_score'])})")
+        print(f"Confidence: {int(best['confidence'] * 100)}%")
+        print(f"PDF saved to: {output_path}")
+
+    except requests.HTTPError as e:
+        print(f"HTTP ERROR: {e}")
+    except requests.RequestException as e:
+        print(f"NETWORK ERROR: {e}")
+    except Exception as e:
+        print(f"ERROR: {e}")
+
+
+if __name__ == "__main__":
+    main()
