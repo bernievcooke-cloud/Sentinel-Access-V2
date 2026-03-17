@@ -16,7 +16,10 @@ import streamlit as st
 # PAGE CONFIG MUST BE FIRST STREAMLIT COMMAND
 # ============================================================
 st.set_page_config(page_title="Oz Trip Planner", layout="wide")
-...
+
+# ============================================================
+# HEADER
+# ============================================================
 col_title, col_link = st.columns([0.72, 0.28])
 with col_title:
     st.title("Oz Trip Planner")
@@ -252,11 +255,9 @@ def render_progress_box(height: int = 320) -> None:
 
 
 def reset_app_state() -> None:
-    # Clear all Streamlit session state, including user inputs, logs, banners, payment state, outputs
     for k in list(st.session_state.keys()):
         del st.session_state[k]
 
-    # Clear URL query params so paid/cancelled/session_id do not rebuild the page state
     try:
         if hasattr(st, "query_params"):
             st.query_params.clear()
@@ -974,10 +975,6 @@ def fulfill_after_payment(session_id: str) -> None:
         st.session_state.fulfillment_started = False
         return
 
-    surf_profile = {}
-    if isinstance(loc_payload, dict) and isinstance(loc_payload.get("surf_profile"), dict):
-        surf_profile = loc_payload["surf_profile"]
-
     attachments: list[str] = []
     ran_any = False
     errors: list[str] = []
@@ -993,34 +990,60 @@ def fulfill_after_payment(session_id: str) -> None:
             if rt == "Surf":
                 if surf_generate_report is None:
                     raise RuntimeError("core.surf_worker.generate_report import failed. See import errors above.")
+
+                surf_payload = {
+                    "location_key": main_location,
+                    "display_name": loc_payload.get("display_name", main_location),
+                    "latitude": lat,
+                    "longitude": lon,
+                    "lat": lat,
+                    "lon": lon,
+                    "state": loc_payload.get("state"),
+                }
+
                 pdf_path = call_worker_generate_report(
-                    surf_generate_report, main_location, [lat, lon, surf_profile], output_dir, logger=log
+                    surf_generate_report,
+                    main_location,
+                    surf_payload,
+                    output_dir,
+                    logger=log,
                 )
                 st.session_state.outputs["Surf"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Surf")
-                ran_any = True
+                if pdf_path:
+                    ran_any = True
                 log(f"SURF {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Sky":
                 if sky_worker is None:
                     raise RuntimeError("core.sky_worker import failed. See import errors above.")
                 pdf_path = call_worker_generate_report(
-                    sky_worker, main_location, [lat, lon], output_dir, logger=log
+                    sky_worker,
+                    main_location,
+                    [lat, lon],
+                    output_dir,
+                    logger=log,
                 )
                 st.session_state.outputs["Sky"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Sky")
-                ran_any = True
+                if pdf_path:
+                    ran_any = True
                 log(f"SKY {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Weather":
                 if weather_worker is None:
                     raise RuntimeError("core.weather_worker import failed. See import errors above.")
                 pdf_path = call_worker_generate_report(
-                    weather_worker, main_location, [lat, lon], output_dir, logger=log
+                    weather_worker,
+                    main_location,
+                    [lat, lon],
+                    output_dir,
+                    logger=log,
                 )
                 st.session_state.outputs["Weather"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Weather")
-                ran_any = True
+                if pdf_path:
+                    ran_any = True
                 log(f"WEATHER {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Trip":
@@ -1037,11 +1060,16 @@ def fulfill_after_payment(session_id: str) -> None:
                 }
                 trip_name = f"{route[0]}_{route[-1]}"
                 pdf_path = call_worker_generate_report(
-                    trip_worker, trip_name, trip_data, output_dir, logger=log
+                    trip_worker,
+                    trip_name,
+                    trip_data,
+                    output_dir,
+                    logger=log,
                 )
                 st.session_state.outputs["Trip"] = {"result": pdf_path}
                 maybe_add_attachment(attachments, pdf_path, label="Trip")
-                ran_any = True
+                if pdf_path:
+                    ran_any = True
                 log(f"TRIP {'complete' if pdf_path else 'failed'}.")
 
         except Exception as e:
