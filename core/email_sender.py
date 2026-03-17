@@ -13,11 +13,15 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+try:
+    import streamlit as st
+except Exception:
+    st = None  # type: ignore
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- ENV FILE ---
-# Local fixed path first, then project-relative path, then default environment
 FIXED_ENV_FILE_PATH = Path(r"C:\OneDrive\Sentinel-Access-V2\Sentinel-Access-V2\config\.env")
 PROJECT_ENV_FILE_PATH = Path(__file__).resolve().parents[1] / "config" / ".env"
 
@@ -31,21 +35,32 @@ else:
     load_dotenv()
     logger.warning("No explicit .env file found; loaded default environment if available.")
 
-EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip()
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "").strip()
 
-SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com").strip()
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+def _get_secret(name: str, default: str = "") -> str:
+    # 1) regular environment / .env
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+
+    # 2) Streamlit secrets
+    try:
+        if st is not None and hasattr(st, "secrets") and name in st.secrets:
+            value = str(st.secrets[name]).strip()
+            if value:
+                return value
+    except Exception:
+        pass
+
+    return default
+
+
+EMAIL_FROM = _get_secret("EMAIL_FROM", "")
+EMAIL_PASSWORD = _get_secret("EMAIL_PASSWORD", "")
+SMTP_SERVER = _get_secret("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(_get_secret("SMTP_PORT", "587"))
 
 
 def _extract_single_path(item: Any) -> str | None:
-    """
-    Accepts:
-      - str / Path
-      - dict with 'result'
-      - tuple/list containing a usable path-like value
-    Returns a normalised string path or None.
-    """
     if item is None:
         return None
 
@@ -117,9 +132,9 @@ def send_report_email(
     subject = (subject or "Your Sentinel Access Reports").strip()
 
     if not EMAIL_FROM:
-        return False, "Missing EMAIL_FROM in environment."
+        return False, "Missing EMAIL_FROM in environment or Streamlit secrets."
     if not EMAIL_PASSWORD:
-        return False, "Missing EMAIL_PASSWORD in environment."
+        return False, "Missing EMAIL_PASSWORD in environment or Streamlit secrets."
     if not to_email:
         return False, "Recipient email is required."
 
@@ -174,9 +189,6 @@ def send_report_email(
         return False, str(e)
 
 
-# -------------------------------------------------------------------
-# WRAPPER for app.py / app_pay.py compatibility
-# -------------------------------------------------------------------
 def send_email(
     to_email: str,
     subject: str,
@@ -184,10 +196,6 @@ def send_email(
     attachments: list[Any] | None = None,
     username: str = "there",
 ) -> bool:
-    """
-    Wrapper so app.py/app_pay.py can call a standard send_email(...) signature.
-    Raises RuntimeError on failure so caller can catch/log it.
-    """
     ok, err = send_report_email(
         to_email=to_email,
         username=username,
