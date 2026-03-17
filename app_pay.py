@@ -12,17 +12,17 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# ===========================================================
+# ============================================================
 # PAGE CONFIG MUST BE FIRST STREAMLIT COMMAND
 # ============================================================
-st.set_page_config(page_title="Aust:Surf-Weather-Trip Planner")
+st.set_page_config(page_title="Oz Trip Planner", layout="wide")
 
 # ============================================================
 # HEADER
 # ============================================================
 col_title, col_link = st.columns([0.72, 0.28])
 with col_title:
-    st.title("Aust: Surf-Weather-Sky-trip Planner")
+    st.title("Oz Trip Planner")
 with col_link:
     st.markdown(
         """
@@ -1096,11 +1096,11 @@ def fulfill_after_payment(session_id: str) -> None:
         for a in attachments:
             log(f" - {Path(a).name}")
 
-    subject = f"Surf Sky Weather Trip Planer" — {', '.join(selected_in_order)} — {main_location}"
+    subject = f"Sentinel Access — {', '.join(selected_in_order)} — {main_location}"
     body_lines = [
         f"Hello {user.get('name') or ''}",
         "",
-        "Attached are your Selected Report(s):",
+        "Attached are your Sentinel Access report(s):",
         f"- Reports: {', '.join(selected_in_order)}",
         f"- Location: {main_location}",
     ]
@@ -1310,7 +1310,7 @@ with middle:
     if payment_url:
         render_pay_button(payment_url)
     elif st.session_state.is_running or st.session_state.get("pending_paid_session_id"):
-        st.info("System is working on the next step…")
+        st.info("Sentinel is working on the next step…")
 
     st.multiselect(
         "Report type(s)",
