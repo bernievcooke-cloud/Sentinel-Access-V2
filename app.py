@@ -527,10 +527,6 @@ def generate_pay_action() -> None:
         }
         return
 
-    surf_profile = {}
-    if isinstance(loc_payload, dict) and isinstance(loc_payload.get("surf_profile"), dict):
-        surf_profile = loc_payload["surf_profile"]
-
     attachments: list[str] = []
     ran_any = False
     errors: list[str] = []
@@ -546,10 +542,19 @@ def generate_pay_action() -> None:
             if rt == "Surf":
                 if surf_generate_report is None:
                     raise RuntimeError("core.surf_worker.generate_report import failed. See import error shown above.")
+
+                surf_payload = {
+                    "location_key": main_location,
+                    "display_name": loc_payload.get("display_name", main_location),
+                    "latitude": lat,
+                    "longitude": lon,
+                    "state": loc_payload.get("state"),
+                }
+
                 pdf_path = call_worker_generate_report(
                     surf_generate_report,
                     main_location,
-                    [lat, lon, surf_profile],
+                    surf_payload,
                     output_dir,
                     logger=log,
                 )
