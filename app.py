@@ -527,10 +527,6 @@ def generate_pay_action() -> None:
         }
         return
 
-    surf_profile = {}
-    if isinstance(loc_payload, dict) and isinstance(loc_payload.get("surf_profile"), dict):
-        surf_profile = loc_payload["surf_profile"]
-
     attachments: list[str] = []
     ran_any = False
     errors: list[str] = []
@@ -544,29 +540,29 @@ def generate_pay_action() -> None:
         log(f"--- Running {rt.upper()} ---")
         try:
             if rt == "Surf":
-    if surf_generate_report is None:
-        raise RuntimeError("core.surf_worker.generate_report import failed. See import error shown above.")
+                if surf_generate_report is None:
+                    raise RuntimeError("core.surf_worker.generate_report import failed. See import error shown above.")
 
-    surf_payload = {
-        "location_key": main_location,
-        "display_name": loc_payload.get("display_name", main_location),
-        "latitude": lat,
-        "longitude": lon,
-        "state": loc_payload.get("state"),
-    }
+                surf_payload = {
+                    "location_key": main_location,
+                    "display_name": loc_payload.get("display_name", main_location),
+                    "latitude": lat,
+                    "longitude": lon,
+                    "state": loc_payload.get("state"),
+                }
 
-    pdf_path = call_worker_generate_report(
-        surf_generate_report,
-        main_location,
-        surf_payload,
-        output_dir,
-        logger=log,
-    )
-    st.session_state.outputs["Surf"] = {"result": pdf_path}
-    maybe_add_attachment(attachments, pdf_path, label="Surf")
-    if pdf_path:
-        ran_any = True
-    log(f"SURF {'complete' if pdf_path else 'failed'}.")
+                pdf_path = call_worker_generate_report(
+                    surf_generate_report,
+                    main_location,
+                    surf_payload,
+                    output_dir,
+                    logger=log,
+                )
+                st.session_state.outputs["Surf"] = {"result": pdf_path}
+                maybe_add_attachment(attachments, pdf_path, label="Surf")
+                if pdf_path:
+                    ran_any = True
+                log(f"SURF {'complete' if pdf_path else 'failed'}.")
 
             elif rt == "Sky":
                 if sky_worker is None:
