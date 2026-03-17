@@ -22,7 +22,7 @@ st.set_page_config(page_title="Aust: Surf, Weather, Sky, Trip Planner", layout="
 # ============================================================
 col_title, col_link = st.columns([0.72, 0.28])
 with col_title:
-    st.title("")
+    st.title("Report x Type & Location")
 with col_link:
     st.markdown(
         """
@@ -1096,17 +1096,17 @@ def fulfill_after_payment(session_id: str) -> None:
         for a in attachments:
             log(f" - {Path(a).name}")
 
-    subject = f"Sentinel Access — {', '.join(selected_in_order)} — {main_location}"
+    subject = f"Selected Report's — {', '.join(selected_in_order)} — {main_location}"
     body_lines = [
         f"Hello {user.get('name') or ''}",
         "",
-        "Attached are your Sentinel Access report(s):",
+        "Attached are your Selected report(s):",
         f"- Reports: {', '.join(selected_in_order)}",
         f"- Location: {main_location}",
     ]
     if "Trip" in selected_in_order and trip_cfg:
         body_lines.append(f"- Trip: {trip_cfg.get('start')} → {trip_cfg.get('stop1')} → {trip_cfg.get('stop2')}")
-    body_lines += ["", "Sentinel Access"]
+    body_lines += ["", "Reports"]
     body = "\n".join(body_lines)
 
     ok, msg = send_email_via_sender(
@@ -1194,7 +1194,7 @@ if paid_flag == "1" and session_id_from_query:
         st.session_state.final_banner = {
             "type": "info",
             "title": "✅ Payment confirmed",
-            "detail": f"{paid_msg} Sentinel is now generating your reports.",
+            "detail": f"{paid_msg} System is now generating your reports.",
         }
         log(f"PAID VERIFIED: {session_id_from_query}")
     else:
