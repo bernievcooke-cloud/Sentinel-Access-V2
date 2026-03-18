@@ -88,8 +88,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Sentinel Access")
+st.title("Surf, Weather, Photography, Trip Planner")
 
+# Show import errors clearly at top of page
 if IMPORT_ERRORS:
     st.error("One or more modules failed to import.")
     for err in IMPORT_ERRORS:
@@ -113,6 +114,7 @@ if "chosen_geo_label" not in st.session_state:
     st.session_state.chosen_geo_label = None
 if "location_names" not in st.session_state:
     st.session_state.location_names = []
+
 if "is_running" not in st.session_state:
     st.session_state.is_running = False
 if "final_banner" not in st.session_state:
@@ -525,6 +527,10 @@ def generate_pay_action() -> None:
         }
         return
 
+    surf_profile = {}
+    if isinstance(loc_payload, dict) and isinstance(loc_payload.get("surf_profile"), dict):
+        surf_profile = loc_payload["surf_profile"]
+
     attachments: list[str] = []
     ran_any = False
     errors: list[str] = []
@@ -537,35 +543,33 @@ def generate_pay_action() -> None:
     for rt in selected_in_order:
         log(f"--- Running {rt.upper()} ---")
         try:
-            if rt == "Surf":
-                if surf_generate_report is None:
-                    raise RuntimeError("core.surf_worker.generate_report import failed. See import error shown above.")
+    if rt == "Surf":
+    if surf_generate_report is None:
+        raise RuntimeError("core.surf_worker.generate_report import failed. See import error shown above.")
 
-                surf_payload = {
-                    "location_key": main_location,
-                    "display_name": loc_payload.get("display_name", main_location),
-                    "latitude": lat,
-                    "longitude": lon,
-                    "lat": lat,
-                    "lon": lon,
-                    "state": loc_payload.get("state"),
-                }
+    surf_payload = {
+        "location_key": main_location,
+        "display_name": loc_payload.get("display_name", main_location),
+        "latitude": lat,
+        "longitude": lon,
+        "state": loc_payload.get("state"),
+    }
 
-                pdf_path = call_worker_generate_report(
-                    surf_generate_report,
-                    main_location,
-                    surf_payload,
-                    output_dir,
-                    logger=log,
-                )
-                st.session_state.outputs["Surf"] = {"result": pdf_path}
-                maybe_add_attachment(attachments, pdf_path, label="Surf")
-                if pdf_path:
-                    ran_any = True
-                log(f"SURF {'complete' if pdf_path else 'failed'}.")
+    pdf_path = call_worker_generate_report(
+        surf_generate_report,
+        main_location,
+        surf_payload,
+        output_dir,
+        logger=log,
+    )
+    st.session_state.outputs["Surf"] = {"result": pdf_path}
+    maybe_add_attachment(attachments, pdf_path, label="Surf")
+    if pdf_path:
+        ran_any = True
+    log(f"SURF {'complete' if pdf_path else 'failed'}.")
 
-            elif rt == "Sky":
-                if sky_worker is None:
+    elif rt == "Sky":
+    if sky_worker is None:
                     raise RuntimeError("core.sky_worker import failed. See import error shown above.")
                 pdf_path = call_worker_generate_report(
                     sky_worker,
@@ -574,14 +578,14 @@ def generate_pay_action() -> None:
                     output_dir,
                     logger=log,
                 )
-                st.session_state.outputs["Sky"] = {"result": pdf_path}
-                maybe_add_attachment(attachments, pdf_path, label="Sky")
-                if pdf_path:
+    st.session_state.outputs["Sky"] = {"result": pdf_path}
+    maybe_add_attachment(attachments, pdf_path, label="Sky")
+    if pdf_path:
                     ran_any = True
                 log(f"SKY {'complete' if pdf_path else 'failed'}.")
 
-            elif rt == "Weather":
-                if weather_worker is None:
+    elif rt == "Weather":
+    if weather_worker is None:
                     raise RuntimeError("core.weather_worker import failed. See import error shown above.")
                 pdf_path = call_worker_generate_report(
                     weather_worker,
@@ -590,9 +594,9 @@ def generate_pay_action() -> None:
                     output_dir,
                     logger=log,
                 )
-                st.session_state.outputs["Weather"] = {"result": pdf_path}
-                maybe_add_attachment(attachments, pdf_path, label="Weather")
-                if pdf_path:
+    st.session_state.outputs["Weather"] = {"result": pdf_path}
+    maybe_add_attachment(attachments, pdf_path, label="Weather")
+    if pdf_path:
                     ran_any = True
                 log(f"WEATHER {'complete' if pdf_path else 'failed'}.")
 
@@ -650,8 +654,9 @@ def generate_pay_action() -> None:
 
     log("Sending email…")
     log(f"ATTACHMENTS: {len(attachments)} PDF(s) will be sent.")
-    for a in attachments:
-        log(f" - {Path(a).name}")
+    if attachments:
+        for a in attachments:
+            log(f" - {Path(a).name}")
 
     subject = f"Sentinel Access — {', '.join(selected_in_order)} — {main_location}"
     body_lines = [
@@ -713,6 +718,7 @@ def generate_pay_action() -> None:
 # ============================================================
 left, middle, right = st.columns([0.30, 0.44, 0.26], gap="large")
 
+# LEFT
 with left:
     with st.container():
         st.subheader("Instructions")
@@ -736,6 +742,7 @@ with left:
             disabled=st.session_state.is_running,
         )
 
+# MIDDLE
 with middle:
     with st.container():
         st.subheader("Report setup")
@@ -751,8 +758,9 @@ with middle:
                 st.error(f"{title}\n\n{detail}")
             else:
                 st.info(f"{title}\n\n{detail}")
-        elif st.session_state.is_running:
-            st.info("Running… generating reports and emailing PDFs. (The screen dimming is normal while Streamlit runs.)")
+        else:
+            if st.session_state.is_running:
+                st.info("Running… generating reports and emailing PDFs. (The screen dimming is normal while Streamlit runs.)")
 
         st.multiselect(
             "Report type(s)",
@@ -853,6 +861,7 @@ with middle:
             disabled=st.session_state.is_running,
         )
 
+# RIGHT
 with right:
     with st.container():
         st.subheader("Examples")
