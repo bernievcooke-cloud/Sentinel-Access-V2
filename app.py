@@ -13,7 +13,7 @@ import streamlit as st
 # ============================================================
 # PAGE CONFIG FIRST
 # ============================================================
-st.set_page_config(page_title="Sentinel Access", layout="wide")
+st.set_page_config(page_title="Surf, Weather, Photography, Trip Planner", layout="wide")
 
 # ============================================================
 # IMPORTS
@@ -90,7 +90,6 @@ st.markdown(
 
 st.title("Sentinel Access")
 
-# Show import errors clearly at top of page
 if IMPORT_ERRORS:
     st.error("One or more modules failed to import.")
     for err in IMPORT_ERRORS:
@@ -114,7 +113,6 @@ if "chosen_geo_label" not in st.session_state:
     st.session_state.chosen_geo_label = None
 if "location_names" not in st.session_state:
     st.session_state.location_names = []
-
 if "is_running" not in st.session_state:
     st.session_state.is_running = False
 if "final_banner" not in st.session_state:
@@ -548,6 +546,8 @@ def generate_pay_action() -> None:
                     "display_name": loc_payload.get("display_name", main_location),
                     "latitude": lat,
                     "longitude": lon,
+                    "lat": lat,
+                    "lon": lon,
                     "state": loc_payload.get("state"),
                 }
 
@@ -650,9 +650,8 @@ def generate_pay_action() -> None:
 
     log("Sending email…")
     log(f"ATTACHMENTS: {len(attachments)} PDF(s) will be sent.")
-    if attachments:
-        for a in attachments:
-            log(f" - {Path(a).name}")
+    for a in attachments:
+        log(f" - {Path(a).name}")
 
     subject = f"Sentinel Access — {', '.join(selected_in_order)} — {main_location}"
     body_lines = [
@@ -714,7 +713,6 @@ def generate_pay_action() -> None:
 # ============================================================
 left, middle, right = st.columns([0.30, 0.44, 0.26], gap="large")
 
-# LEFT
 with left:
     with st.container():
         st.subheader("Instructions")
@@ -738,7 +736,6 @@ with left:
             disabled=st.session_state.is_running,
         )
 
-# MIDDLE
 with middle:
     with st.container():
         st.subheader("Report setup")
@@ -754,9 +751,8 @@ with middle:
                 st.error(f"{title}\n\n{detail}")
             else:
                 st.info(f"{title}\n\n{detail}")
-        else:
-            if st.session_state.is_running:
-                st.info("Running… generating reports and emailing PDFs. (The screen dimming is normal while Streamlit runs.)")
+        elif st.session_state.is_running:
+            st.info("Running… generating reports and emailing PDFs. (The screen dimming is normal while Streamlit runs.)")
 
         st.multiselect(
             "Report type(s)",
@@ -857,7 +853,6 @@ with middle:
             disabled=st.session_state.is_running,
         )
 
-# RIGHT
 with right:
     with st.container():
         st.subheader("Examples")
