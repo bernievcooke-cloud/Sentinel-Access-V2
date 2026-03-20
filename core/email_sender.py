@@ -129,7 +129,7 @@ def send_report_email(
 ):
     to_email = (to_email or "").strip()
     username = (username or "there").strip() or "there"
-    subject = (subject or "Your Sentinel Access Reports").strip()
+    subject = (subject or "Your Reports").strip()
 
     if not EMAIL_FROM:
         return False, "Missing EMAIL_FROM in environment or Streamlit secrets."
@@ -149,7 +149,7 @@ def send_report_email(
             f"Hi {username},\n\n"
             f"Please find your requested Sentinel Access report(s) attached.\n\n"
             f"Regards,\n"
-            f"Sentinel Access\n"
+            f"Reports\n"
         )
 
     try:
@@ -200,7 +200,7 @@ def send_email(
         to_email=to_email,
         username=username,
         pdf_paths=attachments or [],
-        subject=subject or "Your Sentinel Access Reports",
+        subject=subject or "Your Reports",
         body=body,
     )
     if not ok:
