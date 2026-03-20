@@ -6,6 +6,7 @@ import os
 import platform
 from datetime import datetime
 from io import BytesIO
+from zoneinfo import ZoneInfo
 
 import matplotlib
 matplotlib.use("Agg")
@@ -33,6 +34,7 @@ from reportlab.platypus import (
 LOCATION_NAME = "Bells Beach"
 LAT = -38.371
 LON = 144.281
+REPORT_TZ = ZoneInfo("Australia/Melbourne")
 
 # Beach / break tuning
 # Direction the beach faces toward the ocean, in degrees:
@@ -74,6 +76,22 @@ def make_safe_name(name: str) -> str:
 
 def make_filename(location_name: str) -> str:
     return f"{make_safe_name(location_name)}_Surf_Forecast.pdf"
+
+
+def now_local() -> datetime:
+    return datetime.now(REPORT_TZ)
+
+
+def parse_local_times(series: pd.Series) -> pd.Series:
+    """
+    Open-Meteo returns local wall-clock strings when timezone is specified.
+    We localize explicitly to Australia/Melbourne so server timezone never
+    affects day slicing or the red 'now' line.
+    """
+    dt = pd.to_datetime(series)
+    if getattr(dt.dt, "tz", None) is None:
+        return dt.dt.tz_localize(REPORT_TZ)
+    return dt.dt.tz_convert(REPORT_TZ)
 
 
 def deg_to_text(deg: float | int | None) -> str:
@@ -120,13 +138,6 @@ def safe_float_text(value, fmt: str = ".1f", suffix: str = "") -> str:
     return f"{value:{fmt}}{suffix}"
 
 
-def score_out_of_10(score_100: float | int | None) -> str:
-    if score_100 is None or pd.isna(score_100):
-        return "n/a"
-    value = float(score_100) / 10.0
-    return f"{round(value):.0f}/10"
-
-
 # ============================================================
 # 3. FETCHERS
 # ============================================================
@@ -142,14 +153,14 @@ def fetch_open_meteo_marine(lat: float, lon: float) -> pd.DataFrame:
         f"?latitude={lat}&longitude={lon}"
         "&hourly=swell_wave_height,swell_wave_direction,wave_period"
         f"&forecast_days={FORECAST_DAYS}"
-        "&timezone=auto"
+        "&timezone=Australia/Melbourne"
     )
     data = fetch_json(url)
     hourly = data.get("hourly", {})
     df = pd.DataFrame(hourly)
     if df.empty or "time" not in df.columns:
         raise ValueError("Marine API returned no hourly data.")
-    df["time"] = pd.to_datetime(df["time"])
+    df["time"] = parse_local_times(df["time"])
     return df
 
 
@@ -157,16 +168,16 @@ def fetch_open_meteo_weather(lat: float, lon: float) -> pd.DataFrame:
     url = (
         "https://api.open-meteo.com/v1/forecast"
         f"?latitude={lat}&longitude={lon}"
-        f"&hourly=wind_speed_10m,wind_direction_10m"
+        "&hourly=wind_speed_10m,wind_direction_10m"
         f"&forecast_days={FORECAST_DAYS}"
-        f"&timezone=auto"
+        "&timezone=Australia/Melbourne"
     )
     data = fetch_json(url)
     hourly = data.get("hourly", {})
     df = pd.DataFrame(hourly)
     if df.empty or "time" not in df.columns:
         raise ValueError("Forecast API returned no hourly data.")
-    df["time"] = pd.to_datetime(df["time"])
+    df["time"] = parse_local_times(df["time"])
     return df.rename(columns={
         "wind_speed_10m": "wind_speed_10m_main",
         "wind_direction_10m": "wind_direction_10m_main",
@@ -178,16 +189,16 @@ def fetch_bom_access_g_weather(lat: float, lon: float) -> pd.DataFrame | None:
         url = (
             "https://api.open-meteo.com/v1/bom"
             f"?latitude={lat}&longitude={lon}"
-            f"&hourly=wind_speed_10m,wind_direction_10m"
+            "&hourly=wind_speed_10m,wind_direction_10m"
             f"&forecast_days={FORECAST_DAYS}"
-            f"&timezone=auto"
+            "&timezone=Australia/Melbourne"
         )
         data = fetch_json(url)
         hourly = data.get("hourly", {})
         df = pd.DataFrame(hourly)
         if df.empty or "time" not in df.columns:
             return None
-        df["time"] = pd.to_datetime(df["time"])
+        df["time"] = parse_local_times(df["time"])
         return df.rename(columns={
             "wind_speed_10m": "wind_speed_10m_bom",
             "wind_direction_10m": "wind_direction_10m_bom",
@@ -222,6 +233,7 @@ def build_dataset(lat: float, lon: float) -> tuple[pd.DataFrame, dict]:
         "wind_source_main": "Open-Meteo Forecast",
         "wind_source_secondary": "Open-Meteo BOM ACCESS-G" if wx_bom is not None else "Unavailable",
         "tide_source": "",
+        "timezone": "Australia/Melbourne",
     }
 
     if wx_bom is not None:
@@ -259,6 +271,7 @@ def build_dataset(lat: float, lon: float) -> tuple[pd.DataFrame, dict]:
     df, tide_source = add_optional_tide(df)
     diagnostics["tide_source"] = tide_source
 
+    df = df.sort_values("time").reset_index(drop=True)
     return df, diagnostics
 
 
@@ -417,15 +430,15 @@ def find_best_windows(df: pd.DataFrame) -> pd.DataFrame:
 # 6. DAY SELECTION
 # ============================================================
 def get_today_df(df: pd.DataFrame) -> pd.DataFrame:
-    now = datetime.now()
-    today_df = df[df["time"].dt.date == now.date()].copy()
+    today = now_local().date()
+    today_df = df[df["time"].dt.date == today].copy()
     if today_df.empty:
         today_df = df.head(24).copy()
     return today_df
 
 
 def get_next_best_day_df(df: pd.DataFrame) -> pd.DataFrame:
-    today = datetime.now().date()
+    today = now_local().date()
 
     daily_best = (
         df.groupby(df["time"].dt.date)["surf_score"]
@@ -474,8 +487,7 @@ def annotate_direction_points(ax, day_df: pd.DataFrame, y_max: float, include_cu
         )
 
     if include_current_line:
-        now = datetime.now()
-        ax.axvline(now, color="red", lw=1.7, label="Current Time")
+        ax.axvline(now_local(), color="red", lw=1.7, label="Current Time")
 
 
 def base_day_chart(day_df: pd.DataFrame, title: str, include_current_line: bool) -> BytesIO:
@@ -512,7 +524,7 @@ def base_day_chart(day_df: pd.DataFrame, title: str, include_current_line: bool)
     ax2.set_ylabel("Wind", fontsize=7)
     ax1.tick_params(axis="both", labelsize=7)
     ax2.tick_params(axis="y", labelsize=7)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=REPORT_TZ))
 
     lines = ax1.get_lines() + ax2.get_lines()
     labels = [l.get_label() for l in lines]
@@ -568,7 +580,7 @@ def generate_weekly_chart(df: pd.DataFrame, location_name: str) -> BytesIO:
     ax2.set_ylabel("Wind", fontsize=7)
     ax1.tick_params(axis="both", labelsize=7)
     ax2.tick_params(axis="y", labelsize=7)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%a %d"))
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%a %d", tz=REPORT_TZ))
 
     lines = ax1.get_lines() + ax2.get_lines()
     labels = [l.get_label() for l in lines]
@@ -613,14 +625,13 @@ def build_pdf(df: pd.DataFrame, diagnostics: dict, location_name: str) -> str:
         fontName="Helvetica-Bold",
     )
 
-    now = datetime.now()
+    now = now_local()
     today_df = get_today_df(df)
     next_best_df = get_next_best_day_df(df)
 
     best_today = today_df.loc[today_df["surf_score"].idxmax()]
     today_sorted = today_df.sort_values("surf_score", ascending=False).reset_index(drop=True)
     backup_today = today_sorted.iloc[1] if len(today_sorted) > 1 else best_today
-
     next_best = next_best_df.loc[next_best_df["surf_score"].idxmax()]
 
     why_para = Paragraph(best_today["summary_reasons"], compact)
@@ -661,9 +672,10 @@ def build_pdf(df: pd.DataFrame, diagnostics: dict, location_name: str) -> str:
     story = [
         Paragraph(f"<b>{location_name.upper()} SURF REPORT</b>", styles["Title"]),
         Paragraph(
-            f"<font size=7.2>Generated {now.strftime('%Y-%m-%d %H:%M')} | "
+            f"<font size=7.2>Generated {now.strftime('%Y-%m-%d %H:%M %Z')} | "
             f"Today chart keeps the live time marker. "
-            f"Direction labels: S = swell direction, W = wind direction.</font>",
+            f"Direction labels: S = swell direction, W = wind direction. "
+            f"Timezone: {diagnostics.get('timezone', 'Australia/Melbourne')}</font>",
             styles["Normal"],
         ),
         Spacer(1, 0.10 * cm),
@@ -704,15 +716,14 @@ def generate_report(
 # ============================================================
 def main() -> None:
     try:
-        output_path = generate_report(location_name=LOCATION_NAME, lat=LAT, lon=LON)
-
-        df, _ = build_dataset(LAT, LON)
+        df, diagnostics = build_dataset(LAT, LON)
         df = find_best_windows(df)
-        best = df.loc[df["surf_score"].idxmax()]
+        output_path = build_pdf(df, diagnostics, LOCATION_NAME)
 
+        best = df.loc[df["surf_score"].idxmax()]
         print("SUCCESS")
         print(f"Location: {LOCATION_NAME}")
-        print(f"Best forecast window: {best['time'].strftime('%Y-%m-%d %H:%M')}")
+        print(f"Best forecast window: {best['time'].strftime('%Y-%m-%d %H:%M %Z')}")
         print(f"Rating: {best['surf_rating']} ({best['surf_score']:.0f}/100)")
         print(f"Confidence: {int(best['confidence'] * 100)}%")
         print(f"PDF saved to: {output_path}")
