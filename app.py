@@ -653,11 +653,11 @@ def generate_pay_action() -> None:
     for a in attachments:
         log(f" - {Path(a).name}")
 
-    subject = f"Sentinel Access — {', '.join(selected_in_order)} — {main_location}"
+    subject = f"Reports — {', '.join(selected_in_order)} — {main_location}"
     body_lines = [
         f"Hello {user.get('name') or ''}",
         "",
-        "Attached are your Sentinel Access report(s):",
+        "Attached are your report(s):",
         f"- Reports: {', '.join(selected_in_order)}",
         f"- Location: {main_location}",
     ]
