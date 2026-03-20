@@ -13,7 +13,7 @@ import streamlit as st
 # ============================================================
 # PAGE CONFIG FIRST
 # ============================================================
-st.set_page_config(page_title="Sentinel Access", layout="wide")
+st.set_page_config(page_title="Report x Type & Location", layout="wide")
 
 # ============================================================
 # IMPORTS
@@ -88,7 +88,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Sentinel Access")
+st.title("Surf, Weather, Sky, Trip Planner")
 
 # Show import errors clearly at top of page
 if IMPORT_ERRORS:
