@@ -442,7 +442,7 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
         status_table = build_weather_status_table(h_df, tz_name, styles, logger=logger)
 
         story = [
-            Paragraph(f"<b>WEATHER SENTINEL REPORT: {target}</b>", styles["Title"]),
+            Paragraph(f"<b>WEATHER REPORT: {target}</b>", styles["Title"]),
             Spacer(1, 8),
             status_table,
             Spacer(1, 10),
