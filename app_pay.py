@@ -273,9 +273,9 @@ def current_step_text() -> str:
     if st.session_state.get("post_payment_done"):
         return "Finished — reports generated and email step completed."
     if st.session_state.get("pending_paid_session_id"):
-        return "Payment confirmed — Sentinel is generating reports and sending the email."
+        return "Payment confirmed — System is generating reports and sending the email."
     if st.session_state.get("is_running"):
-        return "Processing — please stay on this page while Sentinel finishes the next step."
+        return "Processing — please stay on this page while System finishes the next step."
     if st.session_state.get("payment_url"):
         return "Next step: click Pay now to open Stripe and complete payment."
     if st.session_state.get("confirmed_ok"):
@@ -677,7 +677,7 @@ def confirm_action() -> None:
         st.session_state.final_banner = {
             "type": "error",
             "title": "Valid email required",
-            "detail": "Please type the email carefully, then click Confirm details.",
+            "detail": "Please type the email carefully, then CLICK Confirm details.",
         }
         log("ERROR: Valid email missing.")
         return
@@ -774,7 +774,7 @@ def generate_pay_action() -> None:
         st.session_state.final_banner = {
             "type": "error",
             "title": "Confirmation needed",
-            "detail": "Please click Confirm details before creating the payment link.",
+            "detail": "Please CLICK Confirm details before creating the payment link.",
         }
         return
 
@@ -906,7 +906,7 @@ def fulfill_after_payment(session_id: str) -> None:
             st.session_state.final_banner = {
                 "type": "error",
                 "title": "Payment confirmed, but fulfillment could not start",
-                "detail": f"Stripe payment was successful, but Sentinel could not rebuild the order details. {rebuilt_msg}",
+                "detail": f"Stripe payment was successful, but System could not rebuild the order details. {rebuilt_msg}",
             }
             log(f"FULFILLMENT ERROR: {rebuilt_msg}")
             st.session_state.pending_paid_session_id = None
