@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import platform
 from datetime import datetime, timedelta, time as dtime
 from io import BytesIO
 from typing import Any, Callable, Optional
+from zoneinfo import ZoneInfo
 
 import matplotlib
 matplotlib.use("Agg")
@@ -22,6 +24,21 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 DEFAULT_TZ = "Australia/Melbourne"
 
+LOCAL_DIR = (
+    r"C:\RuralAI\OUTPUT\SKY"
+    if platform.system() == "Windows"
+    else os.path.join(os.path.expanduser("~"), "Documents", "Sky Reports")
+)
+os.makedirs(LOCAL_DIR, exist_ok=True)
+
+
+def make_safe_name(name: str) -> str:
+    return "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in name.replace(" ", "_"))
+
+
+def now_local() -> datetime:
+    return datetime.now(ZoneInfo(DEFAULT_TZ))
+
 
 def _to_float(x: Any) -> Optional[float]:
     try:
@@ -32,26 +49,22 @@ def _to_float(x: Any) -> Optional[float]:
         return None
 
 
-def _extract_lat_lon(data: Any) -> tuple[Optional[float], Optional[float]]:
-    if data is None:
-        return None, None
-
-    if isinstance(data, (list, tuple)) and len(data) >= 2:
-        return _to_float(data[0]), _to_float(data[1])
-
-    if not isinstance(data, dict):
-        return None, None
-
-    lat = data.get("latitude") if data.get("latitude") is not None else data.get("lat")
-    lon = data.get("longitude") if data.get("longitude") is not None else data.get("lon")
-
-    return _to_float(lat), _to_float(lon)
-
-
 def _safe_get_json(url: str, timeout: int = 15) -> dict:
     r = requests.get(url, timeout=timeout)
     r.raise_for_status()
     return r.json()
+
+
+def _parse_local_times(series: pd.Series, tz_name: str) -> pd.Series:
+    dt = pd.to_datetime(series, errors="coerce")
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo(DEFAULT_TZ)
+
+    if getattr(dt.dt, "tz", None) is None:
+        return dt.dt.tz_localize(tz).dt.tz_localize(None)
+    return dt.dt.tz_convert(tz).dt.tz_localize(None)
 
 
 def fetch_sky_data(lat: float, lon: float, logger: Callable[[str], None] = print):
@@ -61,7 +74,7 @@ def fetch_sky_data(lat: float, lon: float, logger: Callable[[str], None] = print
             f"?latitude={lat}&longitude={lon}"
             "&hourly=cloud_cover,visibility,precipitation,wind_speed_10m,weather_code"
             "&daily=sunrise,sunset"
-            "&timezone=auto"
+            "&timezone=Australia/Melbourne"
             "&forecast_days=7"
         )
 
@@ -77,7 +90,7 @@ def fetch_sky_data(lat: float, lon: float, logger: Callable[[str], None] = print
         tz_name = j.get("timezone") or DEFAULT_TZ
 
         h_df = pd.DataFrame(hourly)
-        h_df["time"] = pd.to_datetime(h_df["time"], errors="coerce")
+        h_df["time"] = _parse_local_times(h_df["time"], tz_name)
         h_df = h_df.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
 
         for col in ["cloud_cover", "visibility", "precipitation", "wind_speed_10m", "weather_code"]:
@@ -87,11 +100,11 @@ def fetch_sky_data(lat: float, lon: float, logger: Callable[[str], None] = print
 
         d_df = pd.DataFrame(daily) if daily and "time" in daily else pd.DataFrame()
         if not d_df.empty:
-            d_df["time"] = pd.to_datetime(d_df["time"], errors="coerce")
+            d_df["time"] = _parse_local_times(d_df["time"], tz_name)
             if "sunrise" in d_df.columns:
-                d_df["sunrise"] = pd.to_datetime(d_df["sunrise"], errors="coerce")
+                d_df["sunrise"] = _parse_local_times(d_df["sunrise"], tz_name)
             if "sunset" in d_df.columns:
-                d_df["sunset"] = pd.to_datetime(d_df["sunset"], errors="coerce")
+                d_df["sunset"] = _parse_local_times(d_df["sunset"], tz_name)
 
         return h_df, d_df, tz_name
 
@@ -125,7 +138,6 @@ def _moon_phase_info(dt_obj) -> dict[str, str]:
 
     days_since = (dt_obj - known_new_moon).total_seconds() / 86400.0
     lunar_age = days_since % synodic_month
-
     phase_index = int((lunar_age / synodic_month) * 8 + 0.5) % 8
 
     phases = [
@@ -254,12 +266,12 @@ def _plot_condition_panel(
     ax.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=7)
 
 
-def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataFrame]:
+def generate_visuals(h_df: pd.DataFrame, location_name: str) -> tuple[BytesIO, pd.DataFrame]:
     df = h_df.copy()
     df["day_score"] = calculate_day_score(df)
     df["night_score"] = calculate_night_score(df)
 
-    now_dt = datetime.now().replace(minute=0, second=0, microsecond=0)
+    now_dt = now_local().replace(tzinfo=None)
     today_date = now_dt.date()
 
     today_day_start, today_day_end = _day_window_for_date(today_date)
@@ -270,11 +282,10 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
 
     daily_scores = _daily_window_scores(df)
 
-    next_best_day_date = None
-    if not daily_scores.empty and daily_scores["day_score"].notna().any():
-        next_best_day_date = daily_scores.sort_values("day_score", ascending=False).iloc[0]["date"]
-
-    if next_best_day_date is None:
+    future_day_scores = daily_scores[daily_scores["date"] != today_date].copy()
+    if not future_day_scores.empty and future_day_scores["day_score"].notna().any():
+        next_best_day_date = future_day_scores.sort_values("day_score", ascending=False).iloc[0]["date"]
+    else:
         next_best_day_date = today_date
 
     best_day_start, best_day_end = _day_window_for_date(next_best_day_date)
@@ -292,7 +303,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
     _plot_condition_panel(
         axes[0],
         today_day_df,
-        f"1A) TODAY — DAY PHOTOGRAPHY (6AM–6PM) — {target}",
+        f"1A) TODAY — DAY PHOTOGRAPHY (6AM–6PM) — {location_name}",
         "day_score",
         "Best Daytime Window",
         score_color="blue",
@@ -301,7 +312,7 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
     _plot_condition_panel(
         axes[1],
         today_night_df,
-        f"1B) TODAY — NIGHT PHOTOGRAPHY (6PM–6AM) — {target}",
+        f"1B) TODAY — NIGHT PHOTOGRAPHY (6PM–6AM) — {location_name}",
         "night_score",
         "Best Night Window",
         score_color="green",
@@ -411,79 +422,87 @@ def generate_visuals(h_df: pd.DataFrame, target: str) -> tuple[BytesIO, pd.DataF
     return buf, daily_scores
 
 
-def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[str], None] = print):
-    try:
-        lat = lon = None
-        if isinstance(data, dict):
-            lat = _to_float(data.get("latitude", data.get("lat")))
-            lon = _to_float(data.get("longitude", data.get("lon")))
-        elif isinstance(data, (tuple, list)) and len(data) >= 2:
-            lat, lon = _to_float(data[0]), _to_float(data[1])
-
-        if lat is None or lon is None:
-            raise ValueError("Unexpected data format for sky_worker (need dict or [lat, lon]).")
-
-        logger(f"Sky worker: target={target} lat={lat} lon={lon}")
-
-        h_df, d_df, tz_name = fetch_sky_data(lat, lon, logger=logger)
-        if h_df is None or h_df.empty:
-            logger("SKY worker error: No sky forecast data returned.")
-            return None
-
-        img_buffer, daily_scores = generate_visuals(h_df, target)
-
-        best_day_text = "N/A"
-        best_night_text = "N/A"
-        tonight_moon_text = "N/A"
-
-        if not daily_scores.empty:
-            if daily_scores["day_score"].notna().any():
-                best_day_row = daily_scores.sort_values("day_score", ascending=False).iloc[0]
-                best_day_text = f"{best_day_row['date']} ({best_day_row['day_score'] / 10.0:.1f}/10)"
-            if daily_scores["night_score"].notna().any():
-                best_night_row = daily_scores.sort_values("night_score", ascending=False).iloc[0]
-                best_night_text = (
-                    f"{best_night_row['date']} "
-                    f"({best_night_row['night_score'] / 10.0:.1f}/10, "
-                    f"{best_night_row['moon_icon']} {best_night_row['moon_name']})"
-                )
-
-        tonight_moon = _moon_phase_info(datetime.combine(datetime.now().date(), dtime(21, 0)))
-        tonight_moon_text = f"{tonight_moon['icon']} {tonight_moon['name']}"
-
-        os.makedirs(output_dir, exist_ok=True)
-        filename = f"Sky_{target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        ppath = os.path.join(output_dir, filename)
-
-        doc = SimpleDocTemplate(ppath, pagesize=A4, topMargin=0.55 * cm, bottomMargin=0.55 * cm)
-        styles = getSampleStyleSheet()
-
-        story = [
-            Paragraph(f"<b>SKY REPORT: {target}</b>", styles["Title"]),
-            Spacer(1, 0.12 * cm),
-            Paragraph(
-                f"<b>Best Day Photography:</b> {best_day_text} &nbsp;&nbsp; "
-                f"<b>Best Night Photography:</b> {best_night_text}",
-                styles["Normal"],
-            ),
-            Spacer(1, 0.08 * cm),
-            Paragraph(
-                f"<b>Tonight's Moon:</b> {tonight_moon_text}",
-                styles["Normal"],
-            ),
-            Spacer(1, 0.18 * cm),
-            Image(img_buffer, width=18.3 * cm, height=25.2 * cm),
-        ]
-
-        doc.build(story)
-
-        if os.path.exists(ppath) and os.path.getsize(ppath) > 1000:
-            logger(f"SUCCESS: Sky PDF created at {ppath}")
-            return ppath
-
-        logger("ERROR: Sky PDF not written or too small.")
+def _build_sky_pdf(
+    location_name: str,
+    lat: float,
+    lon: float,
+    output_dir: str,
+    logger: Callable[[str], None] = print,
+):
+    h_df, d_df, tz_name = fetch_sky_data(lat, lon, logger=logger)
+    if h_df is None or h_df.empty:
+        logger("SKY worker error: No sky forecast data returned.")
         return None
 
-    except Exception as e:
-        logger(f"SKY worker error: {e}")
-        return None
+    img_buffer, daily_scores = generate_visuals(h_df, location_name)
+
+    best_day_text = "N/A"
+    best_night_text = "N/A"
+
+    if not daily_scores.empty:
+        if daily_scores["day_score"].notna().any():
+            best_day_row = daily_scores.sort_values("day_score", ascending=False).iloc[0]
+            best_day_text = f"{best_day_row['date']} ({best_day_row['day_score'] / 10.0:.1f}/10)"
+        if daily_scores["night_score"].notna().any():
+            best_night_row = daily_scores.sort_values("night_score", ascending=False).iloc[0]
+            best_night_text = (
+                f"{best_night_row['date']} "
+                f"({best_night_row['night_score'] / 10.0:.1f}/10, "
+                f"{best_night_row['moon_icon']} {best_night_row['moon_name']})"
+            )
+
+    tonight_moon = _moon_phase_info(datetime.combine(now_local().date(), dtime(21, 0)))
+    tonight_moon_text = f"{tonight_moon['icon']} {tonight_moon['name']}"
+
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f"{make_safe_name(location_name)}_Sky_Report_{now_local().strftime('%Y%m%d_%H%M%S')}.pdf"
+    ppath = os.path.join(output_dir, filename)
+
+    doc = SimpleDocTemplate(ppath, pagesize=A4, topMargin=0.55 * cm, bottomMargin=0.55 * cm)
+    styles = getSampleStyleSheet()
+
+    story = [
+        Paragraph(f"<b>SKY REPORT: {location_name}</b>", styles["Title"]),
+        Spacer(1, 0.12 * cm),
+        Paragraph(
+            f"<b>Best Day Photography:</b> {best_day_text} &nbsp;&nbsp; "
+            f"<b>Best Night Photography:</b> {best_night_text}",
+            styles["Normal"],
+        ),
+        Spacer(1, 0.08 * cm),
+        Paragraph(
+            f"<b>Tonight's Moon:</b> {tonight_moon_text}",
+            styles["Normal"],
+        ),
+        Spacer(1, 0.18 * cm),
+        Image(img_buffer, width=18.3 * cm, height=25.2 * cm),
+    ]
+
+    doc.build(story)
+
+    if os.path.exists(ppath) and os.path.getsize(ppath) > 1000:
+        logger(f"SUCCESS: Sky PDF created at {ppath}")
+        return ppath
+
+    logger("ERROR: Sky PDF not written or too small.")
+    return None
+
+
+def generate_report(
+    location_name: str,
+    lat: float,
+    lon: float,
+    logger: Callable[[str], None] = print,
+):
+    """
+    App-friendly worker signature.
+    Matches app.py:
+        generate_report(location_name=..., lat=..., lon=...)
+    """
+    return _build_sky_pdf(
+        location_name=location_name,
+        lat=float(lat),
+        lon=float(lon),
+        output_dir=LOCAL_DIR,
+        logger=logger,
+    )
