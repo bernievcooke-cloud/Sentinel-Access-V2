@@ -74,20 +74,22 @@ st.markdown(
     """
     <style>
     .block-container {
-        padding-top: 1rem;
-        padding-bottom: 1rem;
-        max-width: 1200px;
+        padding-top: 1.0rem;
+        padding-bottom: 1.0rem;
+        max-width: 1180px;
     }
     .stButton > button {
         width: 100%;
         border-radius: 10px;
         font-weight: 600;
-        padding-top: 0.6rem;
-        padding-bottom: 0.6rem;
+        padding-top: 0.55rem;
+        padding-bottom: 0.55rem;
     }
     .small-note {
         color: #666;
-        font-size: 0.88rem;
+        font-size: 0.92rem;
+        margin-top: -0.35rem;
+        margin-bottom: 0.8rem;
     }
     </style>
     """,
@@ -98,28 +100,22 @@ st.markdown(
 # HELPERS
 # ============================================================
 APP_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = APP_DIR / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 def safe_str(v: Any) -> str:
     return "" if v is None else str(v)
 
 
-def parse_float(value: str, fallback: Optional[float] = None) -> Optional[float]:
-    txt = safe_str(value).strip()
-    if not txt:
-        return fallback
+def parse_float(value: Any) -> Optional[float]:
     try:
-        return float(txt)
+        if value is None or str(value).strip() == "":
+            return None
+        return float(value)
     except Exception:
-        return fallback
+        return None
 
 
 def call_worker_flex(fn, *, location_name: str, lat: float, lon: float):
-    """
-    Calls worker generate_report functions flexibly depending on signature.
-    """
     sig = inspect.signature(fn)
     params = sig.parameters
     kwargs = {}
@@ -130,6 +126,8 @@ def call_worker_flex(fn, *, location_name: str, lat: float, lon: float):
         kwargs["location"] = location_name
     elif "spot_name" in params:
         kwargs["spot_name"] = location_name
+    elif "target" in params:
+        kwargs["target"] = location_name
 
     if "lat" in params:
         kwargs["lat"] = lat
@@ -144,6 +142,14 @@ def call_worker_flex(fn, *, location_name: str, lat: float, lon: float):
         kwargs["longitude"] = lon
 
     return fn(**kwargs)
+
+
+def locate_saved_file(path_or_result: Any) -> Optional[Path]:
+    if isinstance(path_or_result, str) and path_or_result.strip():
+        p = Path(path_or_result)
+        if p.exists():
+            return p
+    return None
 
 
 def try_send_email(
@@ -190,12 +196,181 @@ def try_send_email(
         return False, f"{type(e).__name__}: {e}"
 
 
-def locate_saved_file(path_or_result: Any) -> Optional[Path]:
-    if isinstance(path_or_result, str) and path_or_result.strip():
-        p = Path(path_or_result)
-        if p.exists():
-            return p
-    return None
+def load_locations() -> list[dict[str, Any]]:
+    """
+    Returns list of dicts with:
+      display_name, latitude, longitude
+    """
+    fallback = [
+        {
+            "display_name": "Bells Beach",
+            "latitude": -38.371,
+            "longitude": 144.281,
+        }
+    ]
+
+    if LocationManager is None:
+        return fallback
+
+    try:
+        lm = LocationManager()
+    except Exception:
+        return fallback
+
+    raw_candidates: list[dict[str, Any]] = []
+
+    # Try common attributes first
+    for attr in ["_locations", "locations"]:
+        if hasattr(lm, attr):
+            try:
+                obj = getattr(lm, attr)
+                if isinstance(obj, dict):
+                    for key, value in obj.items():
+                        if isinstance(value, dict):
+                            display_name = (
+                                value.get("display_name")
+                                or value.get("name")
+                                or str(key)
+                            )
+                            lat = (
+                                value.get("latitude")
+                                if value.get("latitude") is not None
+                                else value.get("lat")
+                            )
+                            lon = (
+                                value.get("longitude")
+                                if value.get("longitude") is not None
+                                else value.get("lon")
+                                if value.get("lon") is not None
+                                else value.get("lng")
+                            )
+                            raw_candidates.append(
+                                {
+                                    "display_name": str(display_name),
+                                    "latitude": parse_float(lat),
+                                    "longitude": parse_float(lon),
+                                }
+                            )
+            except Exception:
+                pass
+
+    # Try common methods if nothing found
+    if not raw_candidates:
+        for method_name in ["list_locations", "all_locations", "get_all_locations"]:
+            if hasattr(lm, method_name):
+                try:
+                    result = getattr(lm, method_name)()
+                    if isinstance(result, dict):
+                        for key, value in result.items():
+                            if isinstance(value, dict):
+                                display_name = (
+                                    value.get("display_name")
+                                    or value.get("name")
+                                    or str(key)
+                                )
+                                lat = (
+                                    value.get("latitude")
+                                    if value.get("latitude") is not None
+                                    else value.get("lat")
+                                )
+                                lon = (
+                                    value.get("longitude")
+                                    if value.get("longitude") is not None
+                                    else value.get("lon")
+                                    if value.get("lon") is not None
+                                    else value.get("lng")
+                                )
+                                raw_candidates.append(
+                                    {
+                                        "display_name": str(display_name),
+                                        "latitude": parse_float(lat),
+                                        "longitude": parse_float(lon),
+                                    }
+                                )
+                    elif isinstance(result, list):
+                        for value in result:
+                            if isinstance(value, dict):
+                                display_name = (
+                                    value.get("display_name")
+                                    or value.get("name")
+                                    or "Unknown"
+                                )
+                                lat = (
+                                    value.get("latitude")
+                                    if value.get("latitude") is not None
+                                    else value.get("lat")
+                                )
+                                lon = (
+                                    value.get("longitude")
+                                    if value.get("longitude") is not None
+                                    else value.get("lon")
+                                    if value.get("lon") is not None
+                                    else value.get("lng")
+                                )
+                                raw_candidates.append(
+                                    {
+                                        "display_name": str(display_name),
+                                        "latitude": parse_float(lat),
+                                        "longitude": parse_float(lon),
+                                    }
+                                )
+                except Exception:
+                    pass
+
+    cleaned: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for row in raw_candidates:
+        name = safe_str(row.get("display_name")).strip()
+        lat = parse_float(row.get("latitude"))
+        lon = parse_float(row.get("longitude"))
+        if not name or lat is None or lon is None:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(
+            {
+                "display_name": name,
+                "latitude": lat,
+                "longitude": lon,
+            }
+        )
+
+    if not cleaned:
+        return fallback
+
+    cleaned.sort(key=lambda x: x["display_name"].casefold())
+    return cleaned
+
+
+def resolve_location(location_name: str, locations: list[dict[str, Any]]) -> tuple[Optional[float], Optional[float]]:
+    for row in locations:
+        if row["display_name"] == location_name:
+            return row["latitude"], row["longitude"]
+    return None, None
+
+
+def show_result_box(title: str, ok: bool, message: str, output_path: Optional[Path]) -> None:
+    if ok:
+        st.success(f"{title}: {message}")
+    else:
+        st.error(f"{title}: {message}")
+
+    if output_path and output_path.exists():
+        st.caption(str(output_path))
+        try:
+            with open(output_path, "rb") as f:
+                st.download_button(
+                    label=f"Download {title}",
+                    data=f.read(),
+                    file_name=output_path.name,
+                    mime="application/pdf",
+                    key=f"dl_{title}_{output_path.name}",
+                )
+        except Exception as e:
+            st.warning(f"Could not open output file for download: {e}")
 
 
 def run_report(
@@ -228,130 +403,21 @@ def run_report(
         return False, f"{type(e).__name__}: {e}", None
 
 
-def get_location_defaults() -> tuple[str, float, float]:
-    return "Bells Beach", -38.371, 144.281
-
-
-def load_location_from_manager(location_name: str) -> tuple[Optional[float], Optional[float], str]:
-    if LocationManager is None:
-        return None, None, "Location manager not available."
-
-    try:
-        lm = LocationManager()
-    except Exception as e:
-        return None, None, f"Location manager failed to load: {e}"
-
-    candidate_methods = [
-        "get_location",
-        "find_location",
-        "lookup_location",
-        "get",
-    ]
-
-    for method_name in candidate_methods:
-        if hasattr(lm, method_name):
-            try:
-                result = getattr(lm, method_name)(location_name)
-                if isinstance(result, dict):
-                    lat = result.get("latitude") or result.get("lat") or result.get("LAT")
-                    lon = (
-                        result.get("longitude")
-                        or result.get("lon")
-                        or result.get("lng")
-                        or result.get("LON")
-                    )
-                    if lat is not None and lon is not None:
-                        return float(lat), float(lon), "Loaded from location manager."
-            except Exception:
-                pass
-
-    return None, None, "Location not found in location manager."
-
-
-def save_location_to_manager(location_name: str, lat: float, lon: float) -> str:
-    if LocationManager is None:
-        return "Location manager not available."
-
-    try:
-        lm = LocationManager()
-    except Exception as e:
-        return f"Location manager failed to load: {e}"
-
-    candidate_methods = [
-        "add_or_update_location",
-        "save_location",
-        "set_location",
-        "add_location",
-    ]
-
-    for method_name in candidate_methods:
-        if hasattr(lm, method_name):
-            try:
-                method = getattr(lm, method_name)
-                sig = inspect.signature(method)
-                kwargs = {}
-
-                if "name" in sig.parameters:
-                    kwargs["name"] = location_name
-                elif "location_name" in sig.parameters:
-                    kwargs["location_name"] = location_name
-                elif "display_name" in sig.parameters:
-                    kwargs["display_name"] = location_name
-
-                if "latitude" in sig.parameters:
-                    kwargs["latitude"] = lat
-                elif "lat" in sig.parameters:
-                    kwargs["lat"] = lat
-
-                if "longitude" in sig.parameters:
-                    kwargs["longitude"] = lon
-                elif "lon" in sig.parameters:
-                    kwargs["lon"] = lon
-                elif "lng" in sig.parameters:
-                    kwargs["lng"] = lon
-
-                method(**kwargs)
-                return "Location saved."
-            except Exception:
-                pass
-
-    return "Could not find a compatible save method on LocationManager."
-
-
-def show_result_box(title: str, ok: bool, message: str, output_path: Optional[Path]) -> None:
-    if ok:
-        st.success(f"{title}: {message}")
-    else:
-        st.error(f"{title}: {message}")
-
-    if output_path and output_path.exists():
-        st.caption(str(output_path))
-        try:
-            with open(output_path, "rb") as f:
-                st.download_button(
-                    label=f"Download {title}",
-                    data=f.read(),
-                    file_name=output_path.name,
-                    mime="application/pdf",
-                    key=f"dl_{title}_{output_path.name}",
-                )
-        except Exception as e:
-            st.warning(f"Could not open output file for download: {e}")
-
-
 # ============================================================
 # SESSION STATE
 # ============================================================
-default_name, default_lat, default_lon = get_location_defaults()
+locations_data = load_locations()
+location_names = [row["display_name"] for row in locations_data]
+default_location = "Bells Beach" if "Bells Beach" in location_names else location_names[0]
 
-if "location_name" not in st.session_state:
-    st.session_state.location_name = default_name
-if "lat" not in st.session_state:
-    st.session_state.lat = default_lat
-if "lon" not in st.session_state:
-    st.session_state.lon = default_lon
-if "recipient_email" not in st.session_state:
-    st.session_state.recipient_email = ""
+if "user_name" not in st.session_state:
+    st.session_state.user_name = ""
+if "user_email" not in st.session_state:
+    st.session_state.user_email = ""
+if "selected_location" not in st.session_state:
+    st.session_state.selected_location = default_location
+if "selected_report_type" not in st.session_state:
+    st.session_state.selected_report_type = "Surf"
 if "last_outputs" not in st.session_state:
     st.session_state.last_outputs = {}
 
@@ -361,7 +427,7 @@ if "last_outputs" not in st.session_state:
 # ============================================================
 st.title("Surf, Weather, Sky, Trip Planner")
 st.markdown(
-    "<div class='small-note'>Surf, weather, sky and trip planning reports</div>",
+    "<div class='small-note'>Generate location-based reports with the original Sentinel-style layout.</div>",
     unsafe_allow_html=True,
 )
 
@@ -371,101 +437,73 @@ if IMPORT_ERRORS:
             st.write(f"- {item}")
 
 # ============================================================
-# LOCATION PANEL
+# TOP FORM
 # ============================================================
-with st.container():
-    col1, col2, col3, col4 = st.columns([2.0, 1.0, 1.0, 1.0])
+st.markdown("### Report details")
 
-    with col1:
-        location_name = st.text_input(
-            "Location name",
-            value=st.session_state.location_name,
-            key="location_name_input",
-        )
+c1, c2, c3, c4 = st.columns([1.4, 1.5, 1.4, 1.1])
 
-    with col2:
-        lat_text = st.text_input(
-            "Latitude",
-            value=str(st.session_state.lat),
-            key="lat_input",
-        )
+with c1:
+    user_name = st.text_input(
+        "User name",
+        value=st.session_state.user_name,
+        key="user_name_input",
+        placeholder="Enter your name",
+    )
 
-    with col3:
-        lon_text = st.text_input(
-            "Longitude",
-            value=str(st.session_state.lon),
-            key="lon_input",
-        )
+with c2:
+    user_email = st.text_input(
+        "Email",
+        value=st.session_state.user_email,
+        key="user_email_input",
+        placeholder="Enter your email",
+    )
 
-    lat = parse_float(lat_text, st.session_state.lat)
-    lon = parse_float(lon_text, st.session_state.lon)
+with c3:
+    selected_location = st.selectbox(
+        "Location",
+        options=location_names,
+        index=location_names.index(st.session_state.selected_location)
+        if st.session_state.selected_location in location_names
+        else 0,
+        key="selected_location_input",
+    )
 
-    with col4:
-        st.write("")
-        st.write("")
-        if st.button("Load saved location", key="load_saved_location_btn"):
-            loaded_lat, loaded_lon, msg = load_location_from_manager(location_name)
-            if loaded_lat is not None and loaded_lon is not None:
-                st.session_state.location_name = location_name
-                st.session_state.lat = loaded_lat
-                st.session_state.lon = loaded_lon
-                st.success(f"{msg} {location_name}: {loaded_lat}, {loaded_lon}")
-                st.rerun()
-            else:
-                st.warning(msg)
+with c4:
+    report_type = st.selectbox(
+        "Report type",
+        options=["Surf", "Weather", "Sky", "Trip"],
+        index=["Surf", "Weather", "Sky", "Trip"].index(st.session_state.selected_report_type)
+        if st.session_state.selected_report_type in ["Surf", "Weather", "Sky", "Trip"]
+        else 0,
+        key="selected_report_type_input",
+    )
 
-    csave1, csave2, csave3 = st.columns([1, 1, 2])
+st.session_state.user_name = user_name
+st.session_state.user_email = user_email
+st.session_state.selected_location = selected_location
+st.session_state.selected_report_type = report_type
 
-    with csave1:
-        if st.button("Save location", key="save_location_btn"):
-            if lat is None or lon is None:
-                st.error("Latitude and longitude must be valid numbers.")
-            else:
-                msg = save_location_to_manager(location_name, lat, lon)
-                st.info(msg)
-
-    with csave2:
-        if st.button("Use Bells Beach", key="bells_btn"):
-            st.session_state.location_name = "Bells Beach"
-            st.session_state.lat = -38.371
-            st.session_state.lon = 144.281
-            st.rerun()
-
-    with csave3:
-        st.caption("Tip: enter a location manually, or load/save it with LocationManager.")
-
-# keep session updated
-if lat is not None:
-    st.session_state.lat = lat
-if lon is not None:
-    st.session_state.lon = lon
-st.session_state.location_name = location_name
+lat, lon = resolve_location(selected_location, locations_data)
 
 if lat is None or lon is None:
-    st.error("Latitude and longitude must be valid numbers before running reports.")
+    st.error("Selected location does not have valid latitude/longitude.")
     st.stop()
 
 # ============================================================
-# REPORT BUTTONS
+# ACTION BUTTONS
 # ============================================================
 st.markdown("### Generate reports")
 
-b1, b2, b3, b4 = st.columns(4)
+b1, b2, b3 = st.columns([1.2, 1.2, 3.0])
 
 with b1:
-    run_surf = st.button("Generate Surf Report", key="run_surf_btn")
+    run_selected = st.button("Generate Selected Report", key="run_selected_btn")
+
 with b2:
-    run_weather = st.button("Generate Weather Report", key="run_weather_btn")
-with b3:
-    run_sky = st.button("Generate Sky Report", key="run_sky_btn")
-with b4:
-    run_trip = st.button("Generate Trip Report", key="run_trip_btn")
-
-ball1, ball2 = st.columns([2, 1])
-
-with ball1:
     run_all = st.button("Generate All Reports", key="run_all_btn")
-with ball2:
+
+with b3:
     clear_results = st.button("Clear Results", key="clear_results_btn")
 
 if clear_results:
@@ -485,7 +523,7 @@ def do_run(title: str, worker_fn):
             ok, message, out_path = run_report(
                 label=title,
                 worker_fn=worker_fn,
-                location_name=location_name,
+                location_name=selected_location,
                 lat=lat,
                 lon=lon,
             )
@@ -495,30 +533,26 @@ def do_run(title: str, worker_fn):
                 st.session_state.last_outputs[title] = str(out_path)
 
 
-if run_surf:
-    do_run("Surf", surf_generate_report)
+def get_worker_by_label(label: str):
+    if label == "Surf":
+        return surf_generate_report
+    if label == "Weather":
+        return getattr(weather_worker, "generate_report", None) if weather_worker else None
+    if label == "Sky":
+        return getattr(sky_worker, "generate_report", None) if sky_worker else None
+    if label == "Trip":
+        return getattr(trip_worker, "generate_report", None) if trip_worker else None
+    return None
 
-if run_weather:
-    weather_fn = getattr(weather_worker, "generate_report", None) if weather_worker else None
-    do_run("Weather", weather_fn)
 
-if run_sky:
-    sky_fn = getattr(sky_worker, "generate_report", None) if sky_worker else None
-    do_run("Sky", sky_fn)
-
-if run_trip:
-    trip_fn = getattr(trip_worker, "generate_report", None) if trip_worker else None
-    do_run("Trip", trip_fn)
+if run_selected:
+    do_run(report_type, get_worker_by_label(report_type))
 
 if run_all:
-    weather_fn = getattr(weather_worker, "generate_report", None) if weather_worker else None
-    sky_fn = getattr(sky_worker, "generate_report", None) if sky_worker else None
-    trip_fn = getattr(trip_worker, "generate_report", None) if trip_worker else None
-
-    do_run("Surf", surf_generate_report)
-    do_run("Weather", weather_fn)
-    do_run("Sky", sky_fn)
-    do_run("Trip", trip_fn)
+    do_run("Surf", get_worker_by_label("Surf"))
+    do_run("Weather", get_worker_by_label("Weather"))
+    do_run("Sky", get_worker_by_label("Sky"))
+    do_run("Trip", get_worker_by_label("Trip"))
 
 # ============================================================
 # LAST OUTPUTS
@@ -555,16 +589,20 @@ st.markdown("### Email a generated file")
 email_col1, email_col2, email_col3 = st.columns([2, 2, 1])
 
 with email_col1:
-    recipient_email = st.text_input(
+    email_to_use = st.text_input(
         "Recipient email",
-        value=st.session_state.recipient_email,
+        value=st.session_state.user_email,
         key="recipient_email_input",
+        placeholder="Enter recipient email",
     )
-    st.session_state.recipient_email = recipient_email
 
 with email_col2:
     available_files = [""] + sorted(st.session_state.last_outputs.keys())
-    selected_label = st.selectbox("Choose report", options=available_files, key="email_report_choice")
+    selected_label = st.selectbox(
+        "Choose report",
+        options=available_files,
+        key="email_report_choice",
+    )
 
 with email_col3:
     st.write("")
@@ -572,7 +610,7 @@ with email_col3:
     send_email_btn = st.button("Send Email", key="send_email_btn")
 
 if send_email_btn:
-    if not recipient_email.strip():
+    if not email_to_use.strip():
         st.error("Please enter a recipient email address.")
     elif not selected_label:
         st.error("Please choose a generated report first.")
@@ -580,9 +618,12 @@ if send_email_btn:
         selected_path = st.session_state.last_outputs.get(selected_label)
         attachment = Path(selected_path) if selected_path else None
         ok, msg = try_send_email(
-            recipient=recipient_email.strip(),
-            subject=f"{selected_label} report - {location_name}",
-            body=f"Attached is the {selected_label.lower()} report for {location_name}.",
+            recipient=email_to_use.strip(),
+            subject=f"{selected_label} report - {selected_location}",
+            body=(
+                f"Hello {user_name or 'there'},\n\n"
+                f"Attached is the {selected_label.lower()} report for {selected_location}.\n"
+            ),
             attachment_path=str(attachment) if attachment else None,
         )
         if ok:
@@ -591,17 +632,21 @@ if send_email_btn:
             st.error(msg)
 
 # ============================================================
-# FOOTER / DEBUG
+# DEBUG
 # ============================================================
 with st.expander("Debug info", expanded=False):
     debug_rows = [
-        {"item": "Location", "value": location_name},
+        {"item": "User name", "value": user_name},
+        {"item": "User email", "value": user_email},
+        {"item": "Location", "value": selected_location},
         {"item": "Latitude", "value": lat},
         {"item": "Longitude", "value": lon},
+        {"item": "Selected report type", "value": report_type},
         {"item": "Surf worker", "value": surf_generate_report is not None},
         {"item": "Weather worker", "value": weather_worker is not None},
         {"item": "Sky worker", "value": sky_worker is not None},
         {"item": "Trip worker", "value": trip_worker is not None},
         {"item": "Email sender", "value": email_sender_mod is not None},
+        {"item": "Location count", "value": len(location_names)},
     ]
     st.dataframe(pd.DataFrame(debug_rows), use_container_width=True)
