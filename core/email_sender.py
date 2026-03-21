@@ -21,7 +21,9 @@ except Exception:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- ENV FILE ---
+# ============================================================
+# ENV LOADING
+# ============================================================
 FIXED_ENV_FILE_PATH = Path(r"C:\OneDrive\Sentinel-Access-V2\Sentinel-Access-V2\config\.env")
 PROJECT_ENV_FILE_PATH = Path(__file__).resolve().parents[1] / "config" / ".env"
 
@@ -37,7 +39,7 @@ else:
 
 
 def _get_secret(name: str, default: str = "") -> str:
-    # 1) regular environment / .env
+    # 1) environment / .env
     value = os.getenv(name, "").strip()
     if value:
         return value
@@ -60,12 +62,16 @@ SMTP_SERVER = _get_secret("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(_get_secret("SMTP_PORT", "587"))
 
 
+# ============================================================
+# PATH NORMALIZATION
+# ============================================================
 def _extract_single_path(item: Any) -> str | None:
     if item is None:
         return None
 
     if isinstance(item, dict):
-        item = item.get("result")
+        # support dict-wrapped result payloads
+        item = item.get("result", item.get("path", item.get("file_path")))
 
     if isinstance(item, (tuple, list)):
         for sub in item:
@@ -104,7 +110,9 @@ def _valid_pdf_paths(paths: list[str]) -> list[str]:
         try:
             if not p:
                 continue
+
             p = str(Path(p))
+
             if p in seen:
                 continue
             if not os.path.isfile(p):
@@ -113,23 +121,28 @@ def _valid_pdf_paths(paths: list[str]) -> list[str]:
                 continue
             if os.path.getsize(p) <= 1000:
                 continue
+
             good.append(p)
             seen.add(p)
         except Exception:
             continue
+
     return good
 
 
+# ============================================================
+# CORE EMAIL SEND
+# ============================================================
 def send_report_email(
     to_email: str,
     username: str,
     pdf_paths: list[Any] | None,
     subject: str | None = None,
     body: str | None = None,
-):
+) -> tuple[bool, str | None]:
     to_email = (to_email or "").strip()
     username = (username or "there").strip() or "there"
-    subject = (subject or "Your Sentinel Access Reports").strip()
+    subject = (subject or "Your Reports").strip()
 
     if not EMAIL_FROM:
         return False, "Missing EMAIL_FROM in environment or Streamlit secrets."
@@ -147,9 +160,9 @@ def send_report_email(
     if body is None:
         body = (
             f"Hi {username},\n\n"
-            f"Please find your requested Sentinel Access report(s) attached.\n\n"
+            f"Please find your requested report(s) attached.\n\n"
             f"Regards,\n"
-            f"Sentinel Access\n"
+            f"Reports\n"
         )
 
     try:
@@ -183,26 +196,50 @@ def send_report_email(
 
     except smtplib.SMTPAuthenticationError:
         logger.exception("Email authentication error")
-        return False, "Login failed. Verify your Gmail App Password (EMAIL_PASSWORD)."
+        return False, "Login failed. Verify EMAIL_FROM and EMAIL_PASSWORD / Gmail App Password."
     except Exception as e:
         logger.exception("Email error")
         return False, str(e)
 
 
+# ============================================================
+# APP-FRIENDLY WRAPPER
+# ============================================================
 def send_email(
     to_email: str,
     subject: str,
     body: str,
     attachments: list[Any] | None = None,
+    attachment_path: str | None = None,
+    pdf_path: str | None = None,
+    file_path: str | None = None,
     username: str = "there",
 ) -> bool:
+    """
+    Supports multiple calling styles from app.py:
+      send_email(..., attachments=[...])
+      send_email(..., attachment_path="file.pdf")
+      send_email(..., pdf_path="file.pdf")
+      send_email(..., file_path="file.pdf")
+    """
+    collected: list[Any] = []
+
+    if attachments:
+        collected.extend(attachments)
+
+    for single in [attachment_path, pdf_path, file_path]:
+        if single:
+            collected.append(single)
+
     ok, err = send_report_email(
         to_email=to_email,
         username=username,
-        pdf_paths=attachments or [],
-        subject=subject or "Your Sentinel Access Reports",
+        pdf_paths=collected,
+        subject=subject or "Your Reports",
         body=body,
     )
+
     if not ok:
         raise RuntimeError(err or "Email failed")
+
     return True
