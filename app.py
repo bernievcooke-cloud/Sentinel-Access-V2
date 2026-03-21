@@ -122,7 +122,6 @@ def call_worker_flex(fn, *, location_name: str, lat: float, lon: float):
     """
     sig = inspect.signature(fn)
     params = sig.parameters
-
     kwargs = {}
 
     if "location_name" in params:
@@ -173,6 +172,7 @@ def try_send_email(
                 kwargs["subject"] = subject
             if "body" in sig.parameters:
                 kwargs["body"] = body
+
             if attachment_path:
                 if "attachment_path" in sig.parameters:
                     kwargs["attachment_path"] = attachment_path
@@ -183,7 +183,9 @@ def try_send_email(
 
             fn(**kwargs)
             return True, "Email sent."
+
         return False, "Email function not found."
+
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
 
@@ -217,6 +219,7 @@ def run_report(
         if out_path is not None:
             return True, f"{label} report created successfully.", out_path
         return True, f"{label} ran successfully.", None
+
     except requests.HTTPError as e:
         return False, f"HTTP error: {e}", None
     except requests.RequestException as e:
@@ -250,11 +253,7 @@ def load_location_from_manager(location_name: str) -> tuple[Optional[float], Opt
             try:
                 result = getattr(lm, method_name)(location_name)
                 if isinstance(result, dict):
-                    lat = (
-                        result.get("latitude")
-                        or result.get("lat")
-                        or result.get("LAT")
-                    )
+                    lat = result.get("latitude") or result.get("lat") or result.get("LAT")
                     lon = (
                         result.get("longitude")
                         or result.get("lon")
@@ -360,8 +359,11 @@ if "last_outputs" not in st.session_state:
 # ============================================================
 # HEADER
 # ============================================================
-st.title("Srf, Weather, Sky, Trip Planner")
-st.markdown("<div class='small-note'>Surf, weather, sky and trip report launcher</div>", unsafe_allow_html=True)
+st.title("Surf, Weather, Sky, Trip Planner")
+st.markdown(
+    "<div class='small-note'>Surf, weather, sky and trip planning reports</div>",
+    unsafe_allow_html=True,
+)
 
 if IMPORT_ERRORS:
     with st.expander("Import diagnostics", expanded=False):
@@ -413,6 +415,7 @@ with st.container():
                 st.warning(msg)
 
     csave1, csave2, csave3 = st.columns([1, 1, 2])
+
     with csave1:
         if st.button("Save location", key="save_location_btn"):
             if lat is None or lon is None:
@@ -459,6 +462,7 @@ with b4:
     run_trip = st.button("Generate Trip Report", key="run_trip_btn")
 
 ball1, ball2 = st.columns([2, 1])
+
 with ball1:
     run_all = st.button("Generate All Reports", key="run_all_btn")
 with ball2:
@@ -472,6 +476,7 @@ if clear_results:
 # EXECUTION
 # ============================================================
 results_area = st.container()
+
 
 def do_run(title: str, worker_fn):
     with results_area:
@@ -524,9 +529,11 @@ if st.session_state.last_outputs:
         path_obj = Path(p)
         if path_obj.exists():
             c1, c2 = st.columns([3, 1])
+
             with c1:
                 st.write(f"**{label}** — {path_obj.name}")
                 st.caption(str(path_obj))
+
             with c2:
                 try:
                     with open(path_obj, "rb") as f:
