@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -77,12 +76,11 @@ CONFIG_DIR.mkdir(exist_ok=True)
 LOCATIONS_JSON_PATH = CONFIG_DIR / "locations.json"
 
 AU_STATES = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
+REPORT_OPTIONS = ["Surf", "Weather", "Sky", "Trip"]
 
 DEFAULT_LOCATION_NAME = "Bells Beach"
 DEFAULT_LAT = -38.371
 DEFAULT_LON = 144.281
-
-REPORT_OPTIONS = ["Surf", "Weather", "Sky", "Trip"]
 
 # ============================================================
 # STYLE
@@ -166,7 +164,7 @@ def init_state() -> None:
         "trip_dest_1": "",
         "trip_dest_2": "",
         "trip_dest_3": "",
-        "progress_log": "System ready.",
+        "progress_lines": ["System ready."],
         "email_status": "",
         "last_outputs": {},
         "geo_query": "",
@@ -174,11 +172,6 @@ def init_state() -> None:
         "geo_results": [],
         "geo_selected_index": 0,
         "confirmed_reports": [],
-        "confirmed_trip_start": "",
-        "confirmed_trip_dest_1": "",
-        "confirmed_trip_dest_2": "",
-        "confirmed_trip_dest_3": "",
-        "confirmed_location": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -188,21 +181,8 @@ def init_state() -> None:
 init_state()
 
 # ============================================================
-# GENERIC HELPERS
+# HELPERS
 # ============================================================
-def log_progress(msg: str) -> None:
-    current = st.session_state.get("progress_log", "")
-    if current:
-        st.session_state["progress_log"] = f"{current}\n{msg}"
-    else:
-        st.session_state["progress_log"] = msg
-    print(msg)
-
-
-def reset_progress(msg: str = "System ready.") -> None:
-    st.session_state["progress_log"] = msg
-
-
 def safe_str(v: Any) -> str:
     return "" if v is None else str(v)
 
@@ -214,6 +194,30 @@ def parse_float(value: Any) -> Optional[float]:
         return float(value)
     except Exception:
         return None
+
+
+def log_progress(msg: str) -> None:
+    lines = list(st.session_state.get("progress_lines", []))
+    lines.append(msg)
+    st.session_state["progress_lines"] = lines
+    print(msg)
+
+
+def reset_progress(msg: str = "System ready.") -> None:
+    st.session_state["progress_lines"] = [msg]
+
+
+def progress_text() -> str:
+    return "\n".join(st.session_state.get("progress_lines", []))
+
+
+def clear_transient_state() -> None:
+    st.session_state["email_status"] = ""
+    st.session_state["geo_results"] = []
+    st.session_state["geo_selected_index"] = 0
+    st.session_state["confirmed_reports"] = []
+    st.session_state["last_outputs"] = {}
+    reset_progress("Page refreshed.")
 
 
 def make_safe_name(name: str) -> str:
@@ -263,23 +267,18 @@ def load_locations() -> list[dict[str, Any]]:
     if LocationManager is not None:
         try:
             lm = LocationManager()
-
             for attr in ["_locations", "locations"]:
                 if hasattr(lm, attr):
                     obj = getattr(lm, attr)
                     if isinstance(obj, dict):
                         for key, value in obj.items():
                             if isinstance(value, dict):
-                                name = value.get("display_name") or value.get("name") or str(key)
-                                lat = value.get("latitude", value.get("lat"))
-                                lon = value.get("longitude", value.get("lon", value.get("lng")))
-                                state = value.get("state", "")
                                 rows.append(
                                     {
-                                        "display_name": str(name),
-                                        "latitude": parse_float(lat),
-                                        "longitude": parse_float(lon),
-                                        "state": safe_str(state),
+                                        "display_name": str(value.get("display_name") or value.get("name") or key),
+                                        "latitude": parse_float(value.get("latitude", value.get("lat"))),
+                                        "longitude": parse_float(value.get("longitude", value.get("lon", value.get("lng")))),
+                                        "state": safe_str(value.get("state", "")),
                                     }
                                 )
         except Exception:
@@ -288,16 +287,12 @@ def load_locations() -> list[dict[str, Any]]:
     raw_json = load_locations_from_json()
     for key, value in raw_json.items():
         if isinstance(value, dict):
-            name = value.get("display_name") or value.get("name") or str(key)
-            lat = value.get("latitude", value.get("lat"))
-            lon = value.get("longitude", value.get("lon", value.get("lng")))
-            state = value.get("state", "")
             rows.append(
                 {
-                    "display_name": str(name),
-                    "latitude": parse_float(lat),
-                    "longitude": parse_float(lon),
-                    "state": safe_str(state),
+                    "display_name": str(value.get("display_name") or value.get("name") or key),
+                    "latitude": parse_float(value.get("latitude", value.get("lat"))),
+                    "longitude": parse_float(value.get("longitude", value.get("lon", value.get("lng")))),
+                    "state": safe_str(value.get("state", "")),
                 }
             )
 
@@ -309,12 +304,15 @@ def load_locations() -> list[dict[str, Any]]:
         lat = parse_float(row.get("latitude"))
         lon = parse_float(row.get("longitude"))
         state = safe_str(row.get("state")).strip()
+
         if not name or lat is None or lon is None:
             continue
+
         key = name.casefold()
         if key in seen:
             continue
         seen.add(key)
+
         cleaned.append(
             {
                 "display_name": name,
@@ -325,14 +323,14 @@ def load_locations() -> list[dict[str, Any]]:
         )
 
     if not cleaned:
-        cleaned.append(
+        cleaned = [
             {
                 "display_name": DEFAULT_LOCATION_NAME,
                 "latitude": DEFAULT_LAT,
                 "longitude": DEFAULT_LON,
                 "state": "VIC",
             }
-        )
+        ]
 
     cleaned.sort(key=lambda x: x["display_name"].casefold())
     return cleaned
@@ -654,7 +652,6 @@ def add_confirmed_report(report_type: str, location_name: str) -> tuple[bool, st
         return False, "That report/location combination is already confirmed."
     confirmed.append(item)
     st.session_state.confirmed_reports = confirmed
-    st.session_state.confirmed_location = location_name
     return True, f"Confirmed: {item}"
 
 
@@ -670,10 +667,6 @@ def set_confirmed_trip(start_location: str, dest1: str, dest2: str, dest3: str) 
 
     confirmed.append(item)
     st.session_state.confirmed_reports = confirmed
-    st.session_state.confirmed_trip_start = start_location
-    st.session_state.confirmed_trip_dest_1 = dest1
-    st.session_state.confirmed_trip_dest_2 = dest2
-    st.session_state.confirmed_trip_dest_3 = dest3
     return True, f"Confirmed: {item}"
 
 
@@ -682,7 +675,7 @@ def clear_confirmed_reports() -> None:
 
 
 # ============================================================
-# LOAD LOCATIONS FOR UI
+# LOAD LOCATIONS
 # ============================================================
 locations_data = load_locations()
 location_names = [row["display_name"] for row in locations_data]
@@ -698,7 +691,7 @@ if st.session_state.trip_start not in location_names:
 # ============================================================
 st.title("Surf, Weather, Sky, Trip Planner")
 st.markdown(
-    "<div class='small-note'>Sentinel-style layout with confirmed multi-report selection and auto-email sending.</div>",
+    "<div class='small-note'>Sentinel-style layout with progress logging, confirmed multi-report selection, and auto-email sending.</div>",
     unsafe_allow_html=True,
 )
 
@@ -749,8 +742,7 @@ with left_col:
     )
 
     if st.button("Refresh Page", key="refresh_page_btn"):
-        reset_progress("Page refreshed.")
-        st.session_state.email_status = ""
+        clear_transient_state()
         st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -884,8 +876,9 @@ with middle_col:
         if st.button("Confirm & Add Location", key="confirm_add_location_btn"):
             results = st.session_state.get("geo_results", [])
             idx = int(st.session_state.get("geo_selected_index", 0))
+
             if not results:
-                log_progress("No searched location available to confirm.")
+                log_progress("No searched location available to confirm. Use Auto Find Location first.")
             elif idx < 0 or idx >= len(results):
                 log_progress("Selected location result is out of range.")
             else:
@@ -900,6 +893,9 @@ with middle_col:
                 if ok:
                     st.session_state.selected_location = chosen["display_name"]
                     st.session_state.trip_start = chosen["display_name"]
+                    st.session_state.geo_query = ""
+                    st.session_state.geo_results = []
+                    st.session_state.geo_selected_index = 0
                     st.rerun()
 
     geo_results = st.session_state.get("geo_results", [])
@@ -919,13 +915,19 @@ with middle_col:
     st.markdown("#### System progress")
     st.text_area(
         "System progress",
-        value=st.session_state.progress_log,
-        height=220,
+        value=progress_text(),
+        height=240,
         key="progress_display_box",
         disabled=True,
         label_visibility="collapsed",
     )
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ------------------------------------------------------------
+# RIGHT PANEL
+# ------------------------------------------------------------
+with right_col:
     if st.button("Generate Report/s", key="generate_reports_btn"):
         reset_progress("Starting report generation...")
         st.session_state.email_status = ""
@@ -964,10 +966,7 @@ with middle_col:
                                 file_path=output_path,
                             )
                             log_progress(e_msg)
-                            if e_ok:
-                                email_messages.append(f"Trip sent")
-                            else:
-                                email_messages.append(f"Trip email failed")
+                            email_messages.append("Trip sent" if e_ok else "Trip email failed")
 
                     else:
                         try:
@@ -995,24 +994,14 @@ with middle_col:
                                 file_path=output_path,
                             )
                             log_progress(e_msg)
-                            if e_ok:
-                                email_messages.append(f"{report_label} sent")
-                            else:
-                                email_messages.append(f"{report_label} email failed")
+                            email_messages.append(f"{report_label} sent" if e_ok else f"{report_label} email failed")
 
-                if email_messages:
-                    st.session_state.email_status = (
-                        f"Email status: {', '.join(email_messages)} to {st.session_state.user_email}"
-                    )
-                else:
-                    st.session_state.email_status = "No reports were emailed."
+                st.session_state.email_status = (
+                    f"Email status: {', '.join(email_messages)} to {st.session_state.user_email}"
+                    if email_messages
+                    else "No reports were emailed."
+                )
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ------------------------------------------------------------
-# RIGHT PANEL
-# ------------------------------------------------------------
-with right_col:
     email_status = st.session_state.get("email_status", "")
     if email_status:
         st.markdown(
@@ -1036,28 +1025,3 @@ with right_col:
         else:
             st.write(f"No {label.lower()} report generated yet.")
         st.markdown("</div>", unsafe_allow_html=True)
-
-# ============================================================
-# DEBUG
-# ============================================================
-with st.expander("Debug info", expanded=False):
-    debug_rows = [
-        {"item": "User name", "value": st.session_state.user_name},
-        {"item": "User email", "value": st.session_state.user_email},
-        {"item": "Report type", "value": st.session_state.report_type},
-        {"item": "Selected location", "value": st.session_state.selected_location},
-        {"item": "Confirmed reports", "value": ", ".join(st.session_state.confirmed_reports)},
-        {"item": "Trip start", "value": st.session_state.trip_start},
-        {"item": "Trip dest 1", "value": st.session_state.trip_dest_1},
-        {"item": "Trip dest 2", "value": st.session_state.trip_dest_2},
-        {"item": "Trip dest 3", "value": st.session_state.trip_dest_3},
-        {"item": "Locations count", "value": len(location_names)},
-        {"item": "Surf worker", "value": surf_generate_report is not None},
-        {"item": "Weather worker", "value": weather_worker is not None},
-        {"item": "Sky worker", "value": sky_worker is not None},
-        {"item": "Trip worker", "value": trip_worker is not None},
-        {"item": "Email sender", "value": email_sender_mod is not None},
-        {"item": "LocationManager", "value": LocationManager is not None},
-        {"item": "locations.json", "value": str(LOCATIONS_JSON_PATH)},
-    ]
-    st.dataframe(pd.DataFrame(debug_rows), use_container_width=True)
