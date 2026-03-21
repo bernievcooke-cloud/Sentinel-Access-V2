@@ -76,21 +76,13 @@ CONFIG_DIR = APP_DIR / "config"
 CONFIG_DIR.mkdir(exist_ok=True)
 LOCATIONS_JSON_PATH = CONFIG_DIR / "locations.json"
 
-AU_STATES = [
-    "NSW",
-    "VIC",
-    "QLD",
-    "SA",
-    "WA",
-    "TAS",
-    "NT",
-    "ACT",
-]
+AU_STATES = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
 
 DEFAULT_LOCATION_NAME = "Bells Beach"
 DEFAULT_LAT = -38.371
 DEFAULT_LON = 144.281
 
+REPORT_OPTIONS = ["Surf", "Weather", "Sky", "Trip"]
 
 # ============================================================
 # STYLE
@@ -148,11 +140,18 @@ st.markdown(
         font-weight: 700;
         margin-bottom: 0.35rem;
     }
+    .confirmed-box {
+        border: 1px solid #d7dde5;
+        border-radius: 10px;
+        padding: 0.7rem 0.8rem;
+        background: #fbfcfe;
+        margin-top: 0.45rem;
+        margin-bottom: 0.55rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
-
 
 # ============================================================
 # SESSION STATE
@@ -174,6 +173,12 @@ def init_state() -> None:
         "geo_state": "VIC",
         "geo_results": [],
         "geo_selected_index": 0,
+        "confirmed_reports": [],
+        "confirmed_trip_start": "",
+        "confirmed_trip_dest_1": "",
+        "confirmed_trip_dest_2": "",
+        "confirmed_trip_dest_3": "",
+        "confirmed_location": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -181,7 +186,6 @@ def init_state() -> None:
 
 
 init_state()
-
 
 # ============================================================
 # GENERIC HELPERS
@@ -256,7 +260,6 @@ def save_locations_to_json(payload: dict[str, dict]) -> bool:
 def load_locations() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
-    # Try LocationManager first
     if LocationManager is not None:
         try:
             lm = LocationManager()
@@ -282,7 +285,6 @@ def load_locations() -> list[dict[str, Any]]:
         except Exception:
             pass
 
-    # Also read raw json as fallback / backup
     raw_json = load_locations_from_json()
     for key, value in raw_json.items():
         if isinstance(value, dict):
@@ -344,7 +346,6 @@ def resolve_location(name: str, locations: list[dict[str, Any]]) -> tuple[Option
 
 
 def save_location_entry(display_name: str, state: str, lat: float, lon: float) -> tuple[bool, str]:
-    # Save to raw json first
     payload = load_locations_from_json()
     payload[display_name] = {
         "display_name": display_name,
@@ -354,7 +355,6 @@ def save_location_entry(display_name: str, state: str, lat: float, lon: float) -
     }
     ok_json = save_locations_to_json(payload)
 
-    # Try LocationManager too if available
     lm_msg = ""
     if LocationManager is not None:
         try:
@@ -533,6 +533,11 @@ def try_send_email(
                 kwargs["pdf_path"] = attachment_path
             elif "file_path" in sig.parameters:
                 kwargs["file_path"] = attachment_path
+            elif "attachments" in sig.parameters:
+                kwargs["attachments"] = [attachment_path]
+
+        if "username" in sig.parameters:
+            kwargs["username"] = st.session_state.user_name or "there"
 
         fn(**kwargs)
         return True, "Email sent."
@@ -572,10 +577,7 @@ def run_standard_report(label: str, location_name: str, lat: float, lon: float) 
         return False, f"{type(e).__name__}: {e}", None
 
 
-def run_trip_report(
-    start_location: str,
-    destinations: list[str],
-) -> tuple[bool, str, Optional[Path]]:
+def run_trip_report(start_location: str, destinations: list[str]) -> tuple[bool, str, Optional[Path]]:
     if trip_worker is None:
         return False, "Trip worker not available.", None
 
@@ -583,7 +585,6 @@ def run_trip_report(
     if len(route) < 2:
         return False, "Trip requires at least a start location and 1 destination.", None
 
-    # Prefer dedicated route function if present
     trip_route_fn = getattr(trip_worker, "generate_trip_report_from_route", None)
     try:
         if callable(trip_route_fn):
@@ -593,7 +594,6 @@ def run_trip_report(
                 return True, "Trip report created successfully.", out_path
             return True, "Trip ran successfully.", None
 
-        # Fallback to generic generate_report
         fallback_fn = getattr(trip_worker, "generate_report", None)
         if fallback_fn is None:
             return False, "Trip worker has no usable report function.", None
@@ -645,6 +645,43 @@ def auto_email_report(
 
 
 # ============================================================
+# CONFIRMATION HELPERS
+# ============================================================
+def add_confirmed_report(report_type: str, location_name: str) -> tuple[bool, str]:
+    confirmed = list(st.session_state.get("confirmed_reports", []))
+    item = f"{report_type} | {location_name}"
+    if item in confirmed:
+        return False, "That report/location combination is already confirmed."
+    confirmed.append(item)
+    st.session_state.confirmed_reports = confirmed
+    st.session_state.confirmed_location = location_name
+    return True, f"Confirmed: {item}"
+
+
+def set_confirmed_trip(start_location: str, dest1: str, dest2: str, dest3: str) -> tuple[bool, str]:
+    route_parts = [start_location] + [d for d in [dest1, dest2, dest3] if safe_str(d).strip()]
+    if len(route_parts) < 2:
+        return False, "Trip confirmation needs a start location and at least 1 destination."
+
+    item = "Trip | " + " -> ".join(route_parts)
+    confirmed = list(st.session_state.get("confirmed_reports", []))
+    if item in confirmed:
+        return False, "That trip route is already confirmed."
+
+    confirmed.append(item)
+    st.session_state.confirmed_reports = confirmed
+    st.session_state.confirmed_trip_start = start_location
+    st.session_state.confirmed_trip_dest_1 = dest1
+    st.session_state.confirmed_trip_dest_2 = dest2
+    st.session_state.confirmed_trip_dest_3 = dest3
+    return True, f"Confirmed: {item}"
+
+
+def clear_confirmed_reports() -> None:
+    st.session_state.confirmed_reports = []
+
+
+# ============================================================
 # LOAD LOCATIONS FOR UI
 # ============================================================
 locations_data = load_locations()
@@ -656,13 +693,12 @@ if st.session_state.selected_location not in location_names:
 if st.session_state.trip_start not in location_names:
     st.session_state.trip_start = st.session_state.selected_location
 
-
 # ============================================================
 # HEADER
 # ============================================================
 st.title("Surf, Weather, Sky, Trip Planner")
 st.markdown(
-    "<div class='small-note'>Sentinel-style layout restored: user details, report controls, progress, auto-email, and sample placeholders.</div>",
+    "<div class='small-note'>Sentinel-style layout with confirmed multi-report selection and auto-email sending.</div>",
     unsafe_allow_html=True,
 )
 
@@ -674,7 +710,7 @@ if IMPORT_ERRORS:
 # ============================================================
 # 3-COLUMN LAYOUT
 # ============================================================
-left_col, middle_col, right_col = st.columns([1.05, 1.35, 1.05], gap="large")
+left_col, middle_col, right_col = st.columns([1.05, 1.4, 1.0], gap="large")
 
 # ------------------------------------------------------------
 # LEFT PANEL
@@ -685,12 +721,12 @@ with left_col:
     st.markdown(
         """
         1. Enter your name and email.  
-        2. Choose a report type.  
-        3. Choose a saved location.  
-        4. For Trip, choose up to 3 destinations.  
+        2. Choose a report type and location.  
+        3. Use **Confirm Selection** to add more reports.  
+        4. For Trip, choose up to 3 destinations and confirm the route.  
         5. Use Add New Location to search and save more places.  
-        6. Click Generate Report/s.  
-        7. Generated reports are emailed to your email address and also shown on screen.
+        6. Click **Generate Report/s**.  
+        7. Reports are generated and emailed to your email address.
         """
     )
     st.markdown("</div>", unsafe_allow_html=True)
@@ -726,12 +762,11 @@ with middle_col:
     st.markdown("<div class='panel-box'>", unsafe_allow_html=True)
     st.markdown("<div class='panel-title'>Report controls</div>", unsafe_allow_html=True)
 
-    report_options = ["Surf", "Weather", "Sky", "Trip"]
     st.session_state.report_type = st.selectbox(
         "Select report type",
-        options=report_options,
-        index=report_options.index(st.session_state.report_type)
-        if st.session_state.report_type in report_options
+        options=REPORT_OPTIONS,
+        index=REPORT_OPTIONS.index(st.session_state.report_type)
+        if st.session_state.report_type in REPORT_OPTIONS
         else 0,
         key="report_type_input",
     )
@@ -744,6 +779,79 @@ with middle_col:
         else 0,
         key="selected_location_input",
     )
+
+    if st.session_state.report_type == "Trip":
+        trip_location_options = [""] + location_names
+
+        st.session_state.trip_start = st.selectbox(
+            "Location",
+            options=location_names,
+            index=location_names.index(st.session_state.trip_start)
+            if st.session_state.trip_start in location_names
+            else 0,
+            key="trip_start_input",
+        )
+
+        st.session_state.trip_dest_1 = st.selectbox(
+            "1st destination",
+            options=trip_location_options,
+            index=trip_location_options.index(st.session_state.trip_dest_1)
+            if st.session_state.trip_dest_1 in trip_location_options
+            else 0,
+            key="trip_dest_1_input",
+        )
+
+        st.session_state.trip_dest_2 = st.selectbox(
+            "2nd destination",
+            options=trip_location_options,
+            index=trip_location_options.index(st.session_state.trip_dest_2)
+            if st.session_state.trip_dest_2 in trip_location_options
+            else 0,
+            key="trip_dest_2_input",
+        )
+
+        st.session_state.trip_dest_3 = st.selectbox(
+            "3rd destination",
+            options=trip_location_options,
+            index=trip_location_options.index(st.session_state.trip_dest_3)
+            if st.session_state.trip_dest_3 in trip_location_options
+            else 0,
+            key="trip_dest_3_input",
+        )
+
+    st.markdown("#### Confirm selection")
+    confirm_c1, confirm_c2 = st.columns([1, 1])
+
+    with confirm_c1:
+        if st.button("Confirm Selection", key="confirm_selection_btn"):
+            if st.session_state.report_type == "Trip":
+                ok, msg = set_confirmed_trip(
+                    start_location=st.session_state.trip_start,
+                    dest1=st.session_state.trip_dest_1,
+                    dest2=st.session_state.trip_dest_2,
+                    dest3=st.session_state.trip_dest_3,
+                )
+            else:
+                ok, msg = add_confirmed_report(
+                    report_type=st.session_state.report_type,
+                    location_name=st.session_state.selected_location,
+                )
+            log_progress(msg)
+
+    with confirm_c2:
+        if st.button("Clear Confirmed", key="clear_confirmed_btn"):
+            clear_confirmed_reports()
+            log_progress("Cleared all confirmed report selections.")
+
+    confirmed_reports = st.session_state.get("confirmed_reports", [])
+    if confirmed_reports:
+        st.markdown("<div class='confirmed-box'>", unsafe_allow_html=True)
+        st.write("**Confirmed reports to generate:**")
+        for item in confirmed_reports:
+            st.write(f"- {item}")
+        st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='confirmed-box'>No confirmed reports yet.</div>", unsafe_allow_html=True)
 
     st.markdown("#### Add new location")
     st.session_state.geo_query = st.text_input(
@@ -808,47 +916,6 @@ with middle_col:
             key="geo_selected_index_input",
         )
 
-    if st.session_state.report_type == "Trip":
-        st.markdown("#### Trip planner")
-
-        trip_location_options = [""] + location_names
-
-        st.session_state.trip_start = st.selectbox(
-            "Location",
-            options=location_names,
-            index=location_names.index(st.session_state.trip_start)
-            if st.session_state.trip_start in location_names
-            else 0,
-            key="trip_start_input",
-        )
-
-        st.session_state.trip_dest_1 = st.selectbox(
-            "1st destination",
-            options=trip_location_options,
-            index=trip_location_options.index(st.session_state.trip_dest_1)
-            if st.session_state.trip_dest_1 in trip_location_options
-            else 0,
-            key="trip_dest_1_input",
-        )
-
-        st.session_state.trip_dest_2 = st.selectbox(
-            "2nd destination",
-            options=trip_location_options,
-            index=trip_location_options.index(st.session_state.trip_dest_2)
-            if st.session_state.trip_dest_2 in trip_location_options
-            else 0,
-            key="trip_dest_2_input",
-        )
-
-        st.session_state.trip_dest_3 = st.selectbox(
-            "3rd destination",
-            options=trip_location_options,
-            index=trip_location_options.index(st.session_state.trip_dest_3)
-            if st.session_state.trip_dest_3 in trip_location_options
-            else 0,
-            key="trip_dest_3_input",
-        )
-
     st.markdown("#### System progress")
     st.text_area(
         "System progress",
@@ -863,63 +930,82 @@ with middle_col:
         reset_progress("Starting report generation...")
         st.session_state.email_status = ""
 
-        selected_location = st.session_state.selected_location
-        lat, lon = resolve_location(selected_location, load_locations())
-
-        if lat is None or lon is None:
-            log_progress("Selected location does not have valid coordinates.")
-        elif not st.session_state.user_email.strip():
+        if not st.session_state.user_email.strip():
             log_progress("User email is required before generating and sending reports.")
         else:
-            report_type = st.session_state.report_type
+            confirmed = list(st.session_state.get("confirmed_reports", []))
 
-            if report_type in {"Surf", "Weather", "Sky"}:
-                log_progress(f"Running {report_type} for {selected_location}...")
-                ok, msg, output_path = run_standard_report(report_type, selected_location, lat, lon)
-                log_progress(msg)
+            if not confirmed:
+                log_progress("No confirmed reports selected. Please use Confirm Selection first.")
+            else:
+                email_messages: list[str] = []
 
-                if ok and output_path:
-                    st.session_state.last_outputs[report_type] = str(output_path)
-                    e_ok, e_msg = auto_email_report(
-                        user_name=st.session_state.user_name,
-                        user_email=st.session_state.user_email,
-                        report_label=report_type,
-                        location_name=selected_location,
-                        file_path=output_path,
-                    )
-                    log_progress(e_msg)
-                    if e_ok:
-                        st.session_state.email_status = f"{report_type} report emailed successfully to {st.session_state.user_email}"
+                for item in confirmed:
+                    if item.startswith("Trip | "):
+                        route_text = item.replace("Trip | ", "", 1)
+                        route_parts = [p.strip() for p in route_text.split("->")]
+                        start_location = route_parts[0]
+                        destinations = route_parts[1:]
+
+                        log_progress(f"Running Trip for route: {route_text}")
+                        ok, msg, output_path = run_trip_report(
+                            start_location=start_location,
+                            destinations=destinations,
+                        )
+                        log_progress(msg)
+
+                        if ok and output_path:
+                            st.session_state.last_outputs["Trip"] = str(output_path)
+                            e_ok, e_msg = auto_email_report(
+                                user_name=st.session_state.user_name,
+                                user_email=st.session_state.user_email,
+                                report_label="Trip",
+                                location_name=start_location,
+                                file_path=output_path,
+                            )
+                            log_progress(e_msg)
+                            if e_ok:
+                                email_messages.append(f"Trip sent")
+                            else:
+                                email_messages.append(f"Trip email failed")
+
                     else:
-                        st.session_state.email_status = f"{report_type} report created, but email failed: {e_msg}"
+                        try:
+                            report_label, location_name = [x.strip() for x in item.split("|", 1)]
+                        except Exception:
+                            log_progress(f"Skipping malformed confirmed item: {item}")
+                            continue
 
-            elif report_type == "Trip":
-                trip_route = [
-                    st.session_state.trip_dest_1,
-                    st.session_state.trip_dest_2,
-                    st.session_state.trip_dest_3,
-                ]
-                log_progress(f"Running Trip from {st.session_state.trip_start}...")
-                ok, msg, output_path = run_trip_report(
-                    start_location=st.session_state.trip_start,
-                    destinations=trip_route,
-                )
-                log_progress(msg)
+                        lat, lon = resolve_location(location_name, load_locations())
+                        if lat is None or lon is None:
+                            log_progress(f"Location '{location_name}' does not have valid coordinates.")
+                            continue
 
-                if ok and output_path:
-                    st.session_state.last_outputs["Trip"] = str(output_path)
-                    e_ok, e_msg = auto_email_report(
-                        user_name=st.session_state.user_name,
-                        user_email=st.session_state.user_email,
-                        report_label="Trip",
-                        location_name=st.session_state.trip_start,
-                        file_path=output_path,
+                        log_progress(f"Running {report_label} for {location_name}...")
+                        ok, msg, output_path = run_standard_report(report_label, location_name, lat, lon)
+                        log_progress(msg)
+
+                        if ok and output_path:
+                            st.session_state.last_outputs[report_label] = str(output_path)
+                            e_ok, e_msg = auto_email_report(
+                                user_name=st.session_state.user_name,
+                                user_email=st.session_state.user_email,
+                                report_label=report_label,
+                                location_name=location_name,
+                                file_path=output_path,
+                            )
+                            log_progress(e_msg)
+                            if e_ok:
+                                email_messages.append(f"{report_label} sent")
+                            else:
+                                email_messages.append(f"{report_label} email failed")
+
+                if email_messages:
+                    st.session_state.email_status = (
+                        f"Email status: {', '.join(email_messages)} to {st.session_state.user_email}"
                     )
-                    log_progress(e_msg)
-                    if e_ok:
-                        st.session_state.email_status = f"Trip report emailed successfully to {st.session_state.user_email}"
-                    else:
-                        st.session_state.email_status = f"Trip report created, but email failed: {e_msg}"
+                else:
+                    st.session_state.email_status = "No reports were emailed."
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -941,26 +1027,15 @@ with right_col:
 
     for label in ["Surf", "Weather", "Sky", "Trip"]:
         p = st.session_state.last_outputs.get(label)
+        st.markdown("<div class='placeholder-card'>", unsafe_allow_html=True)
+        st.markdown(f"<div class='placeholder-title'>{label} placeholder</div>", unsafe_allow_html=True)
         if p and Path(p).exists():
             path_obj = Path(p)
-            st.markdown("<div class='placeholder-card'>", unsafe_allow_html=True)
-            st.markdown(f"<div class='placeholder-title'>{label} report</div>", unsafe_allow_html=True)
-            st.write(path_obj.name)
+            st.write(f"Latest generated: {path_obj.name}")
             st.caption(str(path_obj))
-            with open(path_obj, "rb") as f:
-                st.download_button(
-                    f"Download {label}",
-                    data=f.read(),
-                    file_name=path_obj.name,
-                    mime="application/pdf",
-                    key=f"download_{label}_{path_obj.name}",
-                )
-            st.markdown("</div>", unsafe_allow_html=True)
         else:
-            st.markdown("<div class='placeholder-card'>", unsafe_allow_html=True)
-            st.markdown(f"<div class='placeholder-title'>{label} example placeholder</div>", unsafe_allow_html=True)
             st.write(f"No {label.lower()} report generated yet.")
-            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================================================
 # DEBUG
@@ -971,6 +1046,7 @@ with st.expander("Debug info", expanded=False):
         {"item": "User email", "value": st.session_state.user_email},
         {"item": "Report type", "value": st.session_state.report_type},
         {"item": "Selected location", "value": st.session_state.selected_location},
+        {"item": "Confirmed reports", "value": ", ".join(st.session_state.confirmed_reports)},
         {"item": "Trip start", "value": st.session_state.trip_start},
         {"item": "Trip dest 1", "value": st.session_state.trip_dest_1},
         {"item": "Trip dest 2", "value": st.session_state.trip_dest_2},
