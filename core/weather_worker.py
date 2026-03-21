@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import platform
 from io import BytesIO
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -23,6 +24,17 @@ from reportlab.lib import colors
 
 DEFAULT_TZ = "Australia/Melbourne"
 
+LOCAL_DIR = (
+    r"C:\RuralAI\OUTPUT\WEATHER"
+    if platform.system() == "Windows"
+    else os.path.join(os.path.expanduser("~"), "Documents", "Weather Reports")
+)
+os.makedirs(LOCAL_DIR, exist_ok=True)
+
+
+def make_safe_name(name: str) -> str:
+    return "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in name.replace(" ", "_"))
+
 
 def deg_to_compass(deg):
     if deg is None or (isinstance(deg, float) and np.isnan(deg)):
@@ -43,13 +55,25 @@ def _safe_get_json(url: str, timeout: int = 12):
     return r.json()
 
 
+def _parse_local_times(series: pd.Series, tz_name: str) -> pd.Series:
+    dt = pd.to_datetime(series, errors="coerce")
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo(DEFAULT_TZ)
+
+    if getattr(dt.dt, "tz", None) is None:
+        return dt.dt.tz_localize(tz).dt.tz_localize(None)
+    return dt.dt.tz_convert(tz).dt.tz_localize(None)
+
+
 def fetch_weather_data(lat, lon, logger: Callable[[str], None] = print):
     try:
         h_url = (
             "https://api.open-meteo.com/v1/forecast"
             f"?latitude={lat}&longitude={lon}"
             "&hourly=temperature_2m,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code"
-            "&timezone=auto"
+            "&timezone=Australia/Melbourne"
             "&forecast_days=3"
         )
 
@@ -57,7 +81,7 @@ def fetch_weather_data(lat, lon, logger: Callable[[str], None] = print):
             "https://api.open-meteo.com/v1/forecast"
             f"?latitude={lat}&longitude={lon}"
             "&daily=temperature_2m_max,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant,precipitation_sum,weather_code"
-            "&timezone=auto"
+            "&timezone=Australia/Melbourne"
             "&forecast_days=7"
         )
 
@@ -67,18 +91,18 @@ def fetch_weather_data(lat, lon, logger: Callable[[str], None] = print):
         tz_name = h_resp.get("timezone") or d_resp.get("timezone") or DEFAULT_TZ
 
         if "hourly" not in h_resp or "time" not in h_resp["hourly"]:
-            logger("❌ Open-Meteo hourly response missing expected fields.")
+            logger("Open-Meteo hourly response missing expected fields.")
             return None, None, tz_name
 
         if "daily" not in d_resp or "time" not in d_resp["daily"]:
-            logger("❌ Open-Meteo daily response missing expected fields.")
+            logger("Open-Meteo daily response missing expected fields.")
             return None, None, tz_name
 
         h_df = pd.DataFrame(h_resp["hourly"])
         d_df = pd.DataFrame(d_resp["daily"])
 
-        h_df["time"] = pd.to_datetime(h_df["time"], errors="coerce")
-        d_df["time"] = pd.to_datetime(d_df["time"], errors="coerce")
+        h_df["time"] = _parse_local_times(h_df["time"], tz_name)
+        d_df["time"] = _parse_local_times(d_df["time"], tz_name)
 
         h_cols = [
             "temperature_2m",
@@ -116,7 +140,7 @@ def fetch_weather_data(lat, lon, logger: Callable[[str], None] = print):
         return h_df, d_df, tz_name
 
     except Exception as e:
-        logger(f"❌ fetch_weather_data failed: {e}")
+        logger(f"fetch_weather_data failed: {e}")
         return None, None, DEFAULT_TZ
 
 
@@ -168,19 +192,18 @@ def build_weather_status_table(
             status = "NORMAL CONDITIONS"
             bg = colors.honeydew
 
-            if fire or storm or wind or rain:
-                if fire:
-                    status = "❌ 🔥 FIRE ALERT: HEAT & NORTH WIND"
-                    bg = colors.orange
-                elif storm:
-                    status = "❌ ⛈️ STORM ALERT"
-                    bg = colors.lightsalmon
-                elif wind:
-                    status = "❌ 💨 WIND ALERT"
-                    bg = colors.lightsalmon
-                elif rain:
-                    status = "❌ 🌧️ RAIN ALERT"
-                    bg = colors.lightsalmon
+            if fire:
+                status = "FIRE ALERT: HEAT & NORTH WIND"
+                bg = colors.orange
+            elif storm:
+                status = "STORM ALERT"
+                bg = colors.lightsalmon
+            elif wind:
+                status = "WIND ALERT"
+                bg = colors.lightsalmon
+            elif rain:
+                status = "RAIN ALERT"
+                bg = colors.lightsalmon
 
         stat_t = Table(
             [["WEATHER STATUS", status]],
@@ -203,7 +226,7 @@ def build_weather_status_table(
         return stat_t
 
     except Exception as e:
-        logger(f"❌ Failed to build weather status table: {e}")
+        logger(f"Failed to build weather status table: {e}")
         fallback = Table(
             [["WEATHER STATUS", "NORMAL CONDITIONS"]],
             colWidths=[4.5 * cm, 13.5 * cm]
@@ -243,7 +266,6 @@ def generate_daily(h_df, location_name, tz_name=DEFAULT_TZ):
     ax_rain = ax_temp.twinx()
     ax_rain.spines["right"].set_position(("axes", 1.12))
 
-    # TEMP LINES = RED
     l1a, = ax_temp.plot(
         actual["time"],
         actual["temperature_2m"],
@@ -280,7 +302,6 @@ def generate_daily(h_df, location_name, tz_name=DEFAULT_TZ):
                 fontweight="bold",
             )
 
-        # Alert threshold markers retained from second script logic
         if pd.notna(row["temperature_2m"]) and pd.notna(row["wind_direction_10m"]):
             if row["temperature_2m"] > 28 and (row["wind_direction_10m"] >= 315 or row["wind_direction_10m"] <= 45):
                 ax_temp.scatter(row["time"], row["temperature_2m"], color="red", marker="x", s=120, zorder=5)
@@ -339,7 +360,6 @@ def generate_weekly(d_df, location_name):
     ax_rain = ax_temp.twinx()
     ax_rain.spines["right"].set_position(("axes", 1.12))
 
-    # WEEKLY TEMP LINE = RED
     l1, = ax_temp.plot(
         d_df["time"],
         d_df["temperature_2m_max"],
@@ -364,7 +384,6 @@ def generate_weekly(d_df, location_name):
                 fontweight="bold",
             )
 
-        # Alert threshold markers retained from second script logic
         if pd.notna(row["temperature_2m_max"]) and pd.notna(row["wind_direction_10m_dominant"]):
             if row["temperature_2m_max"] > 28 and (row["wind_direction_10m_dominant"] >= 315 or row["wind_direction_10m_dominant"] <= 45):
                 ax_temp.scatter(row["time"], row["temperature_2m_max"], color="red", marker="x", s=120, zorder=5)
@@ -399,12 +418,7 @@ def generate_weekly(d_df, location_name):
     return buf
 
 
-def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[str], None] = print):
-    """
-    Standardized signature: (target, data, output_dir, logger=...)
-    data: dict or tuple/list (lat, lon)
-    Returns PDF path or None.
-    """
+def _generate_report_legacy(target: str, data: Any, output_dir: str, logger: Callable[[str], None] = print):
     try:
         if isinstance(data, dict):
             lat = float(data.get("latitude", data.get("lat", 0)))
@@ -412,59 +426,96 @@ def generate_report(target: str, data: Any, output_dir: str, logger: Callable[[s
         elif isinstance(data, (list, tuple)) and len(data) >= 2:
             lat, lon = float(data[0]), float(data[1])
         else:
-            logger(f"❌ Error: Unexpected data format in weather_worker for {target}")
-            return None
-
-        logger(f"Weather worker: target={target} lat={lat} lon={lon}")
-
-        h_df, d_df, tz_name = fetch_weather_data(lat, lon, logger=logger)
-        if h_df is None or h_df.empty:
-            logger(f"❌ API failure in weather_worker for {target}")
+            logger(f"Error: Unexpected data format in weather_worker for {target}")
             return None
 
         final_folder = os.path.join(output_dir, target)
         os.makedirs(final_folder, exist_ok=True)
 
-        timestamp = datetime.now(ZoneInfo(DEFAULT_TZ)).strftime("%Y-%m-%d_%H%M%S")
-        ppath = os.path.join(final_folder, f"Weather_Report_{target}_{timestamp}.pdf")
-
-        daily_img = generate_daily(h_df, target, tz_name=tz_name)
-        weekly_img = generate_weekly(d_df, target)
-
-        doc = SimpleDocTemplate(
-            ppath,
-            pagesize=A4,
-            topMargin=0.6 * cm,
-            bottomMargin=0.6 * cm
+        return _build_weather_pdf(
+            location_name=target,
+            lat=lat,
+            lon=lon,
+            output_dir=final_folder,
+            logger=logger,
         )
-        styles = getSampleStyleSheet()
-
-        status_table = build_weather_status_table(h_df, tz_name, styles, logger=logger)
-
-        story = [
-            Paragraph(f"<b>WEATHER SENTINEL REPORT: {target}</b>", styles["Title"]),
-            Spacer(1, 8),
-            status_table,
-            Spacer(1, 10),
-            Image(daily_img, 19 * cm, 9.2 * cm),
-            Spacer(1, 10),
-            Image(weekly_img, 19 * cm, 9.2 * cm),
-            Spacer(1, 6),
-            Paragraph(
-                f"<font size=8>Generated | {datetime.now(ZoneInfo(DEFAULT_TZ)).strftime('%Y-%m-%d %H:%M')}</font>",
-                styles["Normal"]
-            ),
-        ]
-
-        doc.build(story)
-
-        if os.path.exists(ppath) and os.path.getsize(ppath) > 1000:
-            logger(f"SUCCESS: Weather PDF created at {ppath}")
-            return ppath
-
-        logger("❌ Weather PDF was not written or is too small.")
-        return None
 
     except Exception as e:
-        logger(f"❌ Critical failure in weather_worker for {target}: {e}")
+        logger(f"Critical failure in weather_worker for {target}: {e}")
         return None
+
+
+def _build_weather_pdf(
+    location_name: str,
+    lat: float,
+    lon: float,
+    output_dir: str,
+    logger: Callable[[str], None] = print,
+):
+    h_df, d_df, tz_name = fetch_weather_data(lat, lon, logger=logger)
+    if h_df is None or h_df.empty:
+        logger(f"API failure in weather_worker for {location_name}")
+        return None
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    timestamp = datetime.now(ZoneInfo(DEFAULT_TZ)).strftime("%Y-%m-%d_%H%M%S")
+    safe_name = make_safe_name(location_name)
+    ppath = os.path.join(output_dir, f"{safe_name}_Weather_Report_{timestamp}.pdf")
+
+    daily_img = generate_daily(h_df, location_name, tz_name=tz_name)
+    weekly_img = generate_weekly(d_df, location_name)
+
+    doc = SimpleDocTemplate(
+        ppath,
+        pagesize=A4,
+        topMargin=0.6 * cm,
+        bottomMargin=0.6 * cm
+    )
+    styles = getSampleStyleSheet()
+
+    status_table = build_weather_status_table(h_df, tz_name, styles, logger=logger)
+
+    story = [
+        Paragraph(f"<b>WEATHER REPORT: {location_name}</b>", styles["Title"]),
+        Spacer(1, 8),
+        status_table,
+        Spacer(1, 10),
+        Image(daily_img, 19 * cm, 9.2 * cm),
+        Spacer(1, 10),
+        Image(weekly_img, 19 * cm, 9.2 * cm),
+        Spacer(1, 6),
+        Paragraph(
+            f"<font size=8>Generated | {datetime.now(ZoneInfo(DEFAULT_TZ)).strftime('%Y-%m-%d %H:%M')}</font>",
+            styles["Normal"]
+        ),
+    ]
+
+    doc.build(story)
+
+    if os.path.exists(ppath) and os.path.getsize(ppath) > 1000:
+        logger(f"SUCCESS: Weather PDF created at {ppath}")
+        return ppath
+
+    logger("Weather PDF was not written or is too small.")
+    return None
+
+
+def generate_report(
+    location_name: str,
+    lat: float,
+    lon: float,
+    logger: Callable[[str], None] = print,
+):
+    """
+    App-friendly worker signature.
+    Matches app.py:
+        generate_report(location_name=..., lat=..., lon=...)
+    """
+    return _build_weather_pdf(
+        location_name=location_name,
+        lat=float(lat),
+        lon=float(lon),
+        output_dir=LOCAL_DIR,
+        logger=logger,
+    )
