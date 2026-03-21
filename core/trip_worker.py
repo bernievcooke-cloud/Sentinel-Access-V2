@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+import platform
 from datetime import datetime
 from io import BytesIO
 from typing import Any, Callable
@@ -21,7 +22,18 @@ from reportlab.lib import colors
 from core.location_manager import LocationManager
 
 
+LOCAL_DIR = (
+    r"C:\RuralAI\OUTPUT\TRIP"
+    if platform.system() == "Windows"
+    else os.path.join(os.path.expanduser("~"), "Documents", "Trip Reports")
+)
+os.makedirs(LOCAL_DIR, exist_ok=True)
+
 LM = LocationManager()
+
+
+def make_safe_name(name: str) -> str:
+    return "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in name.replace(" ", "_"))
 
 
 def _get_lat_lon_from_location(name: str) -> tuple[float, float]:
@@ -119,80 +131,159 @@ def _make_charts(
     return buf
 
 
-def generate_report(
-    target: str,
-    data: Any,
+def _build_trip_pdf(
+    route: list[str],
+    fuel_type: str,
+    fuel_l_per_100km: float,
+    price_per_l: float,
     output_dir: str,
     logger: Callable[[str], None] = print,
 ):
-    """
-    Standardized signature:
-      generate_report(target, data, output_dir, logger=...)
+    if len(route) < 2:
+        raise ValueError("Trip route must contain at least 2 locations.")
 
-    data dict expected:
-      {
-        "route": ["Start", "Stop1", "Stop2"],
-        "fuel_type": "Petrol"|"Diesel",
-        "fuel_l_per_100km": 9.5,
-        "fuel_price": 2.10
-      }
+    legs_rows: list[dict[str, Any]] = []
+    total_km = total_l = total_cost = 0.0
 
-    Returns PDF path or None.
-    """
-    try:
-        if not isinstance(data, dict):
-            raise ValueError("Trip worker expects data dict with 'route' etc.")
+    for i in range(len(route) - 1):
+        s = str(route[i])
+        e = str(route[i + 1])
 
-        route = data.get("route") or data.get("sequence") or data.get("locations")
-        if not isinstance(route, (list, tuple)) or len(route) < 2:
-            raise ValueError("Trip route must contain at least 2 locations.")
+        lat1, lon1 = _get_lat_lon_from_location(s)
+        lat2, lon2 = _get_lat_lon_from_location(e)
 
-        fuel_type = str(data.get("fuel_type", "Petrol")).strip().title()
-        fuel_l_per_100km = float(data.get("fuel_l_per_100km", 9.5))
-        price_per_l = float(data.get("fuel_price", 2.10))
+        dist_km = _haversine_km(lat1, lon1, lat2, lon2)
+        litres = _litres(dist_km, fuel_l_per_100km)
+        cost = litres * price_per_l
 
-        logger(
-            f"Trip worker: target={target} route={route} fuel={fuel_type} "
-            f"{fuel_l_per_100km:.1f}L/100km @ ${price_per_l:.2f}/L"
+        total_km += dist_km
+        total_l += litres
+        total_cost += cost
+
+        legs_rows.append(
+            {
+                "name": f"{s[:3]}→{e[:3]}",
+                "start": s,
+                "end": e,
+                "dist_km": dist_km,
+                "litres": litres,
+                "cost": cost,
+            }
         )
 
-        legs_rows: list[dict[str, Any]] = []
-        total_km = total_l = total_cost = 0.0
+    chart_buf = _make_charts(legs_rows, fuel_type, price_per_l, fuel_l_per_100km)
 
-        for i in range(len(route) - 1):
-            s = str(route[i])
-            e = str(route[i + 1])
+    os.makedirs(output_dir, exist_ok=True)
+    route_title = "_".join(str(x) for x in route)
+    filename = f"{make_safe_name(route_title)}_Trip_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    ppath = os.path.join(output_dir, filename)
 
-            lat1, lon1 = _get_lat_lon_from_location(s)
-            lat2, lon2 = _get_lat_lon_from_location(e)
+    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(
+        ppath,
+        pagesize=A4,
+        topMargin=0.7 * cm,
+        bottomMargin=0.7 * cm,
+    )
 
-            dist_km = _haversine_km(lat1, lon1, lat2, lon2)
-            litres = _litres(dist_km, fuel_l_per_100km)
-            cost = litres * price_per_l
+    summary_table = Table(
+        [
+            ["Fuel type", fuel_type],
+            ["Price per litre", f"${price_per_l:.3f}"],
+            ["Consumption", f"{fuel_l_per_100km:.1f} L/100km"],
+            ["Total distance", f"{total_km:.1f} km"],
+            ["Total fuel", f"{total_l:.1f} L"],
+            ["Total cost", f"${total_cost:.2f}"],
+        ],
+        colWidths=[4.6 * cm, 4.8 * cm],
+    )
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8f5e9")),
+                ("BACKGROUND", (1, 0), (1, -1), colors.white),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bdbdbd")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
 
-            total_km += dist_km
-            total_l += litres
-            total_cost += cost
+    story = [
+        Paragraph(f"<b>TRIP REPORT: {route_title}</b>", styles["Title"]),
+        Spacer(1, 0.20 * cm),
+        Paragraph("<b>Trip Summary</b>", styles["Heading2"]),
+        Spacer(1, 0.12 * cm),
+        summary_table,
+        Spacer(1, 0.28 * cm),
+        Paragraph("<b>Leg Breakdown</b>", styles["Heading2"]),
+        Spacer(1, 0.10 * cm),
+    ]
 
-            legs_rows.append(
-                {
-                    "name": f"{s[:3]}→{e[:3]}",
-                    "start": s,
-                    "end": e,
-                    "dist_km": dist_km,
-                    "litres": litres,
-                    "cost": cost,
-                }
+    for idx, leg in enumerate(legs_rows, start=1):
+        story.append(
+            Paragraph(
+                f"{idx}. <b>{leg['start']} → {leg['end']}</b>  |  "
+                f"{leg['dist_km']:.1f} km  |  "
+                f"{leg['litres']:.1f} L  |  "
+                f"${leg['cost']:.2f}",
+                styles["Normal"],
             )
+        )
+        story.append(Spacer(1, 0.05 * cm))
 
-        chart_buf = _make_charts(legs_rows, fuel_type, price_per_l, fuel_l_per_100km)
+    story.append(Spacer(1, 0.25 * cm))
+    story.append(Image(chart_buf, 18.2 * cm, 15.2 * cm))
 
-        os.makedirs(output_dir, exist_ok=True)
-        filename = f"Trip_{target}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        ppath = os.path.join(output_dir, filename)
+    doc.build(story)
 
-        # Full route title using all route locations
-        route_title = "_".join(str(x) for x in route)
+    if os.path.exists(ppath) and os.path.getsize(ppath) > 1000:
+        logger(f"SUCCESS: Trip PDF created at {ppath}")
+        return ppath
+
+    logger("ERROR: Trip PDF not written or too small.")
+    return None
+
+
+def generate_trip_report_from_route(
+    route: list[str],
+    fuel_type: str = "Petrol",
+    fuel_l_per_100km: float = 9.5,
+    fuel_price: float = 2.10,
+    logger: Callable[[str], None] = print,
+):
+    return _build_trip_pdf(
+        route=route,
+        fuel_type=fuel_type,
+        fuel_l_per_100km=float(fuel_l_per_100km),
+        price_per_l=float(fuel_price),
+        output_dir=LOCAL_DIR,
+        logger=logger,
+    )
+
+
+def generate_report(
+    location_name: str,
+    lat: float,
+    lon: float,
+    logger: Callable[[str], None] = print,
+):
+    """
+    App-friendly fallback signature.
+    This does NOT build a real multi-stop trip.
+    It creates a simple placeholder trip report so app.py does not crash.
+    """
+    try:
+        os.makedirs(LOCAL_DIR, exist_ok=True)
+        filename = f"{make_safe_name(location_name)}_Trip_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        ppath = os.path.join(LOCAL_DIR, filename)
 
         styles = getSampleStyleSheet()
         doc = SimpleDocTemplate(
@@ -202,69 +293,38 @@ def generate_report(
             bottomMargin=0.7 * cm,
         )
 
-        summary_table = Table(
-            [
-                ["Fuel type", fuel_type],
-                ["Price per litre", f"${price_per_l:.3f}"],
-                ["Consumption", f"{fuel_l_per_100km:.1f} L/100km"],
-                ["Total distance", f"{total_km:.1f} km"],
-                ["Total fuel", f"{total_l:.1f} L"],
-                ["Total cost", f"${total_cost:.2f}"],
-            ],
-            colWidths=[4.6 * cm, 4.8 * cm],
-        )
-        summary_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8f5e9")),
-                    ("BACKGROUND", (1, 0), (1, -1), colors.white),
-                    ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
-                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-                    ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bdbdbd")),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ]
-            )
-        )
-
         story = [
-            Paragraph(f"<b>TRIP REPORT: {route_title}</b>", styles["Title"]),
+            Paragraph(f"<b>TRIP REPORT: {location_name}</b>", styles["Title"]),
+            Spacer(1, 0.25 * cm),
+            Paragraph(
+                "This simplified trip report was generated from app.py using a single location.",
+                styles["Normal"],
+            ),
+            Spacer(1, 0.15 * cm),
+            Paragraph(
+                "For a full trip calculation, provide a route with at least two saved locations.",
+                styles["Normal"],
+            ),
             Spacer(1, 0.20 * cm),
-            Paragraph("<b>Trip Summary</b>", styles["Heading2"]),
-            Spacer(1, 0.12 * cm),
-            summary_table,
-            Spacer(1, 0.28 * cm),
-            Paragraph("<b>Leg Breakdown</b>", styles["Heading2"]),
-            Spacer(1, 0.10 * cm),
+            Paragraph(f"<b>Location:</b> {location_name}", styles["Normal"]),
+            Spacer(1, 0.08 * cm),
+            Paragraph(f"<b>Latitude:</b> {float(lat):.6f}", styles["Normal"]),
+            Spacer(1, 0.08 * cm),
+            Paragraph(f"<b>Longitude:</b> {float(lon):.6f}", styles["Normal"]),
+            Spacer(1, 0.20 * cm),
+            Paragraph(
+                "Use generate_trip_report_from_route(route=[...]) for real leg-by-leg fuel costing.",
+                styles["Normal"],
+            ),
         ]
-
-        for idx, leg in enumerate(legs_rows, start=1):
-            story.append(
-                Paragraph(
-                    f"{idx}. <b>{leg['start']} → {leg['end']}</b>  |  "
-                    f"{leg['dist_km']:.1f} km  |  "
-                    f"{leg['litres']:.1f} L  |  "
-                    f"${leg['cost']:.2f}",
-                    styles["Normal"],
-                )
-            )
-            story.append(Spacer(1, 0.05 * cm))
-
-        story.append(Spacer(1, 0.25 * cm))
-        story.append(Image(chart_buf, 18.2 * cm, 15.2 * cm))
 
         doc.build(story)
 
-        if os.path.exists(ppath) and os.path.getsize(ppath) > 1000:
-            logger(f"SUCCESS: Trip PDF created at {ppath}")
+        if os.path.exists(ppath) and os.path.getsize(ppath) > 500:
+            logger(f"SUCCESS: Trip placeholder PDF created at {ppath}")
             return ppath
 
-        logger("ERROR: Trip PDF not written or too small.")
+        logger("ERROR: Trip placeholder PDF not written.")
         return None
 
     except Exception as e:
