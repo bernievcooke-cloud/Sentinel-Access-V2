@@ -14,7 +14,7 @@ import streamlit as st
 # PAGE CONFIG
 # ============================================================
 st.set_page_config(
-    page_title="Oz Trip Planner",
+    page_title="Surf, Weather, Sky, Trip Planner",
     layout="wide",
 )
 
@@ -360,7 +360,7 @@ if "last_outputs" not in st.session_state:
 # ============================================================
 # HEADER
 # ============================================================
-st.title("Oz Trip Planner")
+st.title("Srf, Weather, Sky, Trip Planner")
 st.markdown("<div class='small-note'>Surf, weather, sky and trip report launcher</div>", unsafe_allow_html=True)
 
 if IMPORT_ERRORS:
