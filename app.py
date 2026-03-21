@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-import pandas as pd
 import requests
 import streamlit as st
 
@@ -76,6 +75,26 @@ CONFIG_DIR.mkdir(exist_ok=True)
 LOCATIONS_JSON_PATH = CONFIG_DIR / "locations.json"
 
 AU_STATES = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
+
+STATE_NAME_MAP = {
+    "NEW SOUTH WALES": "NSW",
+    "VICTORIA": "VIC",
+    "QUEENSLAND": "QLD",
+    "SOUTH AUSTRALIA": "SA",
+    "WESTERN AUSTRALIA": "WA",
+    "TASMANIA": "TAS",
+    "NORTHERN TERRITORY": "NT",
+    "AUSTRALIAN CAPITAL TERRITORY": "ACT",
+    "NSW": "NSW",
+    "VIC": "VIC",
+    "QLD": "QLD",
+    "SA": "SA",
+    "WA": "WA",
+    "TAS": "TAS",
+    "NT": "NT",
+    "ACT": "ACT",
+}
+
 REPORT_OPTIONS = ["Surf", "Weather", "Sky", "Trip"]
 
 DEFAULT_LOCATION_NAME = "Bells Beach"
@@ -196,6 +215,11 @@ def parse_float(value: Any) -> Optional[float]:
         return None
 
 
+def normalize_state_name(value: str) -> str:
+    key = safe_str(value).strip().upper()
+    return STATE_NAME_MAP.get(key, key)
+
+
 def log_progress(msg: str) -> None:
     lines = list(st.session_state.get("progress_lines", []))
     lines.append(msg)
@@ -218,10 +242,6 @@ def clear_transient_state() -> None:
     st.session_state["confirmed_reports"] = []
     st.session_state["last_outputs"] = {}
     reset_progress("Page refreshed.")
-
-
-def make_safe_name(name: str) -> str:
-    return "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in safe_str(name).replace(" ", "_"))
 
 
 # ============================================================
@@ -303,7 +323,7 @@ def load_locations() -> list[dict[str, Any]]:
         name = safe_str(row.get("display_name")).strip()
         lat = parse_float(row.get("latitude"))
         lon = parse_float(row.get("longitude"))
-        state = safe_str(row.get("state")).strip()
+        state = normalize_state_name(safe_str(row.get("state")).strip())
 
         if not name or lat is None or lon is None:
             continue
@@ -347,7 +367,7 @@ def save_location_entry(display_name: str, state: str, lat: float, lon: float) -
     payload = load_locations_from_json()
     payload[display_name] = {
         "display_name": display_name,
-        "state": state,
+        "state": normalize_state_name(state),
         "latitude": float(lat),
         "longitude": float(lon),
     }
@@ -372,7 +392,7 @@ def save_location_entry(display_name: str, state: str, lat: float, lon: float) -
                         kwargs["display_name"] = display_name
 
                     if "state" in sig.parameters:
-                        kwargs["state"] = state
+                        kwargs["state"] = normalize_state_name(state)
 
                     if "latitude" in sig.parameters:
                         kwargs["latitude"] = float(lat)
@@ -421,17 +441,21 @@ def search_australian_locations(query: str, state_filter: str) -> tuple[list[dic
         data = r.json()
         results = data.get("results", []) or []
 
+        wanted_state = normalize_state_name(state_filter)
         filtered: list[dict[str, Any]] = []
+
         for row in results:
             country_code = safe_str(row.get("country_code")).upper()
-            admin1 = safe_str(row.get("admin1")).upper()
+            admin1_raw = safe_str(row.get("admin1"))
+            admin1 = normalize_state_name(admin1_raw)
+
             name = safe_str(row.get("name"))
             lat = parse_float(row.get("latitude"))
             lon = parse_float(row.get("longitude"))
 
             if country_code != "AU":
                 continue
-            if state_filter and admin1 != state_filter.upper():
+            if wanted_state and admin1 != wanted_state:
                 continue
             if not name or lat is None or lon is None:
                 continue
@@ -447,7 +471,7 @@ def search_australian_locations(query: str, state_filter: str) -> tuple[list[dic
             )
 
         if not filtered:
-            return [], "No matching Australian locations found for that state."
+            return [], f"No matching Australian locations found for state {wanted_state}."
 
         return filtered, f"Found {len(filtered)} matching location(s)."
 
@@ -691,7 +715,7 @@ if st.session_state.trip_start not in location_names:
 # ============================================================
 st.title("Surf, Weather, Sky, Trip Planner")
 st.markdown(
-    "<div class='small-note'>Sentinel-style layout with progress logging, confirmed multi-report selection, and auto-email sending.</div>",
+    "<div class='small-note'>Sentinel-style layout with working progress logging, location search, and auto-email sending.</div>",
     unsafe_allow_html=True,
 )
 
@@ -866,7 +890,7 @@ with middle_col:
 
     with add_c1:
         if st.button("Auto Find Location", key="auto_find_location_btn"):
-            reset_progress("Searching for location...")
+            log_progress("Auto Find Location clicked.")
             results, msg = search_australian_locations(st.session_state.geo_query, st.session_state.geo_state)
             st.session_state.geo_results = results
             st.session_state.geo_selected_index = 0
@@ -874,6 +898,7 @@ with middle_col:
 
     with add_c2:
         if st.button("Confirm & Add Location", key="confirm_add_location_btn"):
+            log_progress("Confirm & Add Location clicked.")
             results = st.session_state.get("geo_results", [])
             idx = int(st.session_state.get("geo_selected_index", 0))
 
@@ -917,7 +942,6 @@ with middle_col:
         "System progress",
         value=progress_text(),
         height=240,
-        key="progress_display_box",
         disabled=True,
         label_visibility="collapsed",
     )
